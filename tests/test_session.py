@@ -42,7 +42,9 @@ class SessionTest(unittest.TestCase):
         )
 
         self.assertTrue(any("半荘終了" in line for line in output))
-        self.assertTrue(any("位" in line for line in output if "最終" in line or "位" in line))
+        self.assertTrue(
+            any("位" in line for line in output if "最終" in line or "位" in line)
+        )
 
 
 if __name__ == "__main__":

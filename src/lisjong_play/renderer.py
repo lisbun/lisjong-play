@@ -78,7 +78,10 @@ def render_board(observation: SeatObservation) -> str:
             f"{format_seat(score.seat)} {score.points}" for score in observation.scores
         ),
         "ドラ表示牌: "
-        + (" ".join(format_tile(tile) for tile in observation.dora_indicators) or "なし"),
+        + (
+            " ".join(format_tile(tile) for tile in observation.dora_indicators)
+            or "なし"
+        ),
         f"残り山: {observation.remaining_live_wall_count}",
         "立直: "
         + " / ".join(
@@ -94,14 +97,20 @@ def render_board(observation: SeatObservation) -> str:
 
     lines.append("河:  * = ツモ切り / [] = 立直宣言牌 / → = 鳴かれた牌")
     for seat_discards in observation.discards:
-        river = " ".join(_format_discard(item) for item in seat_discards.discards) or "-"
+        river = (
+            " ".join(_format_discard(item) for item in seat_discards.discards) or "-"
+        )
         lines.append(f"  {format_seat(seat_discards.seat)}: {river}")
 
     sorted_hand = tuple(sorted(observation.hand_tiles, key=tile_sort_key))
     lines.append(f"手牌: {format_tiles(sorted_hand)}")
     lines.append(
         "ツモ: "
-        + (format_tile(observation.drawn_tile) if observation.drawn_tile is not None else "-")
+        + (
+            format_tile(observation.drawn_tile)
+            if observation.drawn_tile is not None
+            else "-"
+        )
     )
     return "\n".join(lines)
 
@@ -164,7 +173,11 @@ def render_round_completion(fact: RoundCompletionFact) -> str:
             nagashi = ", ".join(format_seat(seat) for seat in fact.nagashi_mangan_seats)
             lines.append(f"流し満貫: {nagashi}")
     elif fact.outcome is RoundOutcomeKind.ABORTIVE_DRAW:
-        reason = fact.abortive_reason.value if fact.abortive_reason is not None else "unknown"
+        reason = (
+            fact.abortive_reason.value
+            if fact.abortive_reason is not None
+            else "unknown"
+        )
         lines.append(f"結果: 途中流局 ({reason})")
     else:  # pragma: no cover - enum exhaustiveness guard
         raise UnsupportedDeliveryItemError(f"unsupported outcome: {fact.outcome!r}")

@@ -28,11 +28,16 @@ def observation(
     drawn: PublicTile | None = None,
 ) -> SeatObservation:
     hand_tile = drawn or tile()
-    drawn_tile = None if decision_kind in {
-        ObservationDecisionKind.DISCARD_REACTION,
-        ObservationDecisionKind.KAKAN_REACTION,
-        ObservationDecisionKind.ANKAN_REACTION,
-    } else drawn
+    drawn_tile = (
+        None
+        if decision_kind
+        in {
+            ObservationDecisionKind.DISCARD_REACTION,
+            ObservationDecisionKind.KAKAN_REACTION,
+            ObservationDecisionKind.ANKAN_REACTION,
+        }
+        else drawn
+    )
     return SeatObservation(
         viewer_seat=Seat.EAST,
         decision_kind=decision_kind,

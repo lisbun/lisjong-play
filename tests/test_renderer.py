@@ -82,7 +82,9 @@ class RendererTest(unittest.TestCase):
         presenter((round_fact(has_next_round=True),))
 
         result_index = next(i for i, item in enumerate(events) if "局 終了" in item)
-        input_index = next(i for i, item in enumerate(events) if item.startswith("INPUT:"))
+        input_index = next(
+            i for i, item in enumerate(events) if item.startswith("INPUT:")
+        )
         self.assertLess(result_index, input_index)
 
     def test_non_empty_round_confirmation_retries(self) -> None:

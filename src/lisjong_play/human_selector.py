@@ -97,9 +97,13 @@ class HumanActionSelector:
         options: tuple[ActionDescriptor, ...],
     ) -> tuple[ActionDescriptor | None, str | None]:
         if observation.decision_kind in _REACTION_KINDS:
-            passes = tuple(option for option in options if isinstance(option, PassActionDescriptor))
+            passes = tuple(
+                option for option in options if isinstance(option, PassActionDescriptor)
+            )
             if len(passes) > 1:
-                raise HumanSelectionError("reaction decision must not expose multiple pass options")
+                raise HumanSelectionError(
+                    "reaction decision must not expose multiple pass options"
+                )
             if passes:
                 return passes[0], "パス"
 
@@ -109,7 +113,9 @@ class HumanActionSelector:
             if isinstance(option, DiscardActionDescriptor) and option.is_tsumogiri
         )
         if len(tsumogiri) > 1:
-            raise HumanSelectionError("decision must not expose multiple tsumogiri options")
+            raise HumanSelectionError(
+                "decision must not expose multiple tsumogiri options"
+            )
         if tsumogiri:
             return tsumogiri[0], f"ツモ切り {format_tile(tsumogiri[0].tile)}"
         return None, None
