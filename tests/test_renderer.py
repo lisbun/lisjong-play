@@ -81,7 +81,11 @@ class RendererTest(unittest.TestCase):
         presenter = DeliveryPresenter(read, lambda text: events.append(f"OUT:{text}"))
         presenter((round_fact(has_next_round=True),))
 
-        result_index = next(i for i, item in enumerate(events) if "局 終了" in item)
+        result_index = next(
+            i
+            for i, item in enumerate(events)
+            if item.startswith("OUT:--- ") and " 終了 ---" in item
+        )
         input_index = next(
             i for i, item in enumerate(events) if item.startswith("INPUT:")
         )
