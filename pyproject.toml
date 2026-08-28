@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lisjong-play"
+version = "0.1.0"
+description = "Human Play consumer for the lisjong ecosystem"
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+license = "MIT"
+authors = [{ name = "lisbun" }]
+dependencies = [
+    "lisjong @ git+https://github.com/lisbun/lisjong.git@1bc334b6d5df8089a408e80b89f691af0e9d1c80",
+    "lisjong-engine @ git+https://github.com/lisbun/lisjong-engine.git@0ba2e83d01beeeaf9e0c5c62a290ddc54a4ce5cc",
+    "lisjong-arena @ git+https://github.com/lisbun/lisjong-arena.git@1d309787755af298229b6b1244f0d735ef1f2100",
+]
+
+[project.optional-dependencies]
+dev = ["ruff==0.16.0"]
+
+[project.scripts]
+lisjong-play = "lisjong_play.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
