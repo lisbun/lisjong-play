@@ -1,6 +1,11 @@
 import unittest
 
-from lisjong_engine.public_state import PublicMeld, PublicMeldType, SeatPointDelta, SeatScore
+from lisjong_engine.public_state import (
+    PublicMeld,
+    PublicMeldType,
+    SeatPointDelta,
+    SeatScore,
+)
 from lisjong_engine.round_completion import (
     RoundCompletionDoraCount,
     RoundCompletionDoraIndicators,
