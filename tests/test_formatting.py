@@ -19,6 +19,7 @@ from lisjong_engine.tile import TileCategory
 from lisjong_play.formatting import (
     UnsupportedActionDescriptorError,
     format_action_descriptor,
+    format_seat,
     format_tile,
 )
 from tests._fixtures import tile
@@ -49,6 +50,9 @@ class ActionFormattingTest(unittest.TestCase):
                 rendered = format_action_descriptor(action)
                 self.assertIsInstance(rendered, str)
                 self.assertTrue(rendered)
+
+    def test_fixed_seats_use_non_wind_labels(self) -> None:
+        self.assertEqual(["P1", "P2", "P3", "P4"], [format_seat(seat) for seat in Seat])
 
     def test_unknown_descriptor_fails_closed(self) -> None:
         with self.assertRaises(UnsupportedActionDescriptorError):
