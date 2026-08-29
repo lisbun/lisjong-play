@@ -236,6 +236,27 @@ class RoundScoreRendererTest(unittest.TestCase):
         self.assertIn("手役得点: ツモ 親 1000点 / 子 500点", text)
         self.assertNotIn("放銃", text)
 
+    def test_dealer_tsumo_shows_all_payment(self) -> None:
+        candidate = _normal_candidate(
+            yaku=(RoundCompletionYaku(Yaku.MENZEN_TSUMO, "門前清自摸和", han=1),),
+            total_han=1,
+            rounded_fu=30,
+            ron_payment=None,
+            tsumo_dealer_payment=None,
+            tsumo_non_dealer_payment=500,
+        )
+        winner = _winner(
+            seat=Seat.EAST,
+            win_method=WinMethod.TSUMO,
+            candidates=(candidate,),
+        )
+        fact = _win_fact(winners=(winner,), source_seat=None)
+
+        text = render_round_completion(fact)
+
+        self.assertIn("和了: P1（東家） ツモ", text)
+        self.assertIn("手役得点: ツモ 500点オール", text)
+
     def test_double_yakuman_is_not_converted_to_han(self) -> None:
         candidate = RoundCompletionScoreCandidate(
             yaku=(
