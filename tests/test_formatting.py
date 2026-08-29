@@ -52,7 +52,10 @@ class ActionFormattingTest(unittest.TestCase):
                 self.assertTrue(rendered)
 
     def test_fixed_seats_use_non_wind_labels(self) -> None:
-        self.assertEqual(["P1", "P2", "P3", "P4"], [format_seat(seat) for seat in Seat])
+        self.assertEqual(
+            ["P1", "P2", "P3", "P4"],
+            [format_seat(seat) for seat in Seat],
+        )
 
     def test_unknown_descriptor_fails_closed(self) -> None:
         with self.assertRaises(UnsupportedActionDescriptorError):
