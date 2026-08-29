@@ -3,7 +3,13 @@ import unittest
 
 from lisjong_engine.match_state import MatchEndReason
 from lisjong_engine.observation import ObservationDecisionKind
-from lisjong_engine.public_state import PublicDiscard, SeatDiscards, SeatPointDelta, SeatScore
+from lisjong_engine.public_state import (
+    PublicDiscard,
+    PublicTile,
+    SeatDiscards,
+    SeatPointDelta,
+    SeatScore,
+)
 from lisjong_engine.round_completion import (
     MatchCompletionFact,
     RoundCompletionFact,
@@ -53,15 +59,12 @@ def match_fact() -> MatchCompletionFact:
 
 def _display_width(text: str) -> int:
     return sum(
-        2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
-        for char in text
+        2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1 for char in text
     )
 
 
 def _seat_discards(
-    entries: list[
-        tuple[Seat, object, bool, bool, Seat | None]
-    ],
+    entries: list[tuple[Seat, PublicTile, bool, bool, Seat | None]],
 ) -> tuple[SeatDiscards, ...]:
     by_seat: dict[Seat, list[PublicDiscard]] = {seat: [] for seat in Seat}
     for order, (seat, public_tile, tsumogiri, riichi, called_by) in enumerate(entries):
@@ -97,9 +100,7 @@ class RendererTest(unittest.TestCase):
                 self.assertIn(label, text)
 
     def test_board_shows_viewer_and_dealer_as_round_relative_seats(self) -> None:
-        text = render_board(
-            observation(viewer_seat=Seat.SOUTH, dealer_seat=Seat.WEST)
-        )
+        text = render_board(observation(viewer_seat=Seat.SOUTH, dealer_seat=Seat.WEST))
         self.assertIn("あなた: P2（北家）", text)
         self.assertIn("親: P3（東家）", text)
         self.assertIn("P1（西家） 25000", text)
@@ -145,12 +146,20 @@ class RendererTest(unittest.TestCase):
         for _ in range(7):
             for seat in Seat:
                 entries.append(
-                    (seat, tile(rank=((order_tile_rank - 1) % 9) + 1), False, False, None)
+                    (
+                        seat,
+                        tile(rank=((order_tile_rank - 1) % 9) + 1),
+                        False,
+                        False,
+                        None,
+                    )
                 )
                 order_tile_rank += 1
         text = render_board(observation(discards=_seat_discards(entries)))
         lines = text.splitlines()
-        east_index = next(i for i, line in enumerate(lines) if line.startswith("  P1（東家）:"))
+        east_index = next(
+            i for i, line in enumerate(lines) if line.startswith("  P1（東家）:")
+        )
         self.assertTrue(lines[east_index + 1].startswith(" " * 14))
         self.assertIn("7", lines[east_index + 1])
 
