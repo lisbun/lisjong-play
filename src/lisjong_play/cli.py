@@ -3,13 +3,24 @@
 import argparse
 from collections.abc import Callable, Sequence
 
-from lisjong_play.session import DEFAULT_SEED, run_cli_session
+from lisjong_play.session import (
+    DEFAULT_OPPONENT,
+    DEFAULT_SEED,
+    OPPONENT_CHOICES,
+    run_cli_session,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lisjong-play",
-        description="Human EAST vs MinimalPolicy x3 を1半荘プレイします。",
+        description="Human EAST vs selected Policy x3 を1半荘プレイします。",
+    )
+    parser.add_argument(
+        "--opponent",
+        choices=OPPONENT_CHOICES,
+        default=DEFAULT_OPPONENT,
+        help=f"AI opponent Policy (default: {DEFAULT_OPPONENT})",
     )
     parser.add_argument(
         "--seed",
@@ -30,6 +41,7 @@ def main(
     try:
         run_cli_session(
             seed=args.seed,
+            opponent=args.opponent,
             input_reader=input_reader,
             output_writer=output_writer,
         )

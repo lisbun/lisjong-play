@@ -1,8 +1,12 @@
-"""Human EAST + MinimalPolicy x3 のminimum hanchan composition。"""
+"""Human EAST + selected Policy x3 のminimum hanchan composition。"""
 
 from collections.abc import Callable
+from typing import Literal
 
-from lisjong.policies import MinimalPolicy
+from lisjong.policies import (
+    GenbutsuDefenseFiniteHorizonValueAwarePolicy,
+    MinimalPolicy,
+)
 from lisjong_arena.lisjong_engine.policy_selector import PolicySeatSelector
 from lisjong_engine.driver import ActionSelector, run_hanchan
 from lisjong_engine.match_state import MatchState
@@ -12,35 +16,53 @@ from lisjong_play.human_selector import HumanActionSelector
 from lisjong_play.renderer import RIVER_LEGEND, DeliveryPresenter
 
 DEFAULT_SEED = 0
+OpponentName = Literal["minimal", "combined"]
+DEFAULT_OPPONENT: OpponentName = "minimal"
+OPPONENT_CHOICES: tuple[OpponentName, ...] = ("minimal", "combined")
+
+
+def _create_opponent_policy(
+    opponent: OpponentName,
+) -> MinimalPolicy | GenbutsuDefenseFiniteHorizonValueAwarePolicy:
+    match opponent:
+        case "minimal":
+            return MinimalPolicy()
+        case "combined":
+            return GenbutsuDefenseFiniteHorizonValueAwarePolicy()
+        case _:
+            raise ValueError(f"unknown opponent: {opponent}")
 
 
 def build_seat_selectors(
     *,
     input_reader: Callable[[str], str],
     output_writer: Callable[[str], None],
+    opponent: OpponentName = DEFAULT_OPPONENT,
 ) -> dict[Seat, ActionSelector]:
-    """Human EASTとMinimalPolicy 3席をengine selectorへcompositionする。"""
+    """Human EASTと指定Policy 3席をengine selectorへcompositionする。"""
     human = HumanActionSelector(input_reader, output_writer)
     return {
         Seat.EAST: human,
-        Seat.SOUTH: PolicySeatSelector(Seat.SOUTH, MinimalPolicy()),
-        Seat.WEST: PolicySeatSelector(Seat.WEST, MinimalPolicy()),
-        Seat.NORTH: PolicySeatSelector(Seat.NORTH, MinimalPolicy()),
+        Seat.SOUTH: PolicySeatSelector(Seat.SOUTH, _create_opponent_policy(opponent)),
+        Seat.WEST: PolicySeatSelector(Seat.WEST, _create_opponent_policy(opponent)),
+        Seat.NORTH: PolicySeatSelector(Seat.NORTH, _create_opponent_policy(opponent)),
     }
 
 
 def run_cli_session(
     *,
     seed: int = DEFAULT_SEED,
+    opponent: OpponentName = DEFAULT_OPPONENT,
     input_reader: Callable[[str], str] = input,
     output_writer: Callable[[str], None] = print,
 ) -> None:
-    """default RuleSetでHuman EAST vs MinimalPolicy x3を1半荘実行する。"""
+    """default RuleSetでHuman EAST vs selected Policy x3を1半荘実行する。"""
     if type(seed) is not int:
         raise TypeError("seed must be an int")
     selectors = build_seat_selectors(
         input_reader=input_reader,
         output_writer=output_writer,
+        opponent=opponent,
     )
     presenter = DeliveryPresenter(input_reader, output_writer)
     match_state = MatchState(seed=seed, rules=None)

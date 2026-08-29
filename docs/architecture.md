@@ -24,7 +24,7 @@ selected ActionDescriptor
 
 Human choice does not pass through `PolicyInput`, `DecisionContext`, `InternalAction`, or `execute_policy()`.
 
-AI seats use real `lisjong.Policy` implementations. The initial implementation reuses the existing first-party Policy bridge from `lisjong-arena`; bridge conversion / mapping semantics are not copied into this repository.
+AI seats use real `lisjong.Policy` implementations. The CLI explicitly supports `minimal` and `combined`; all three AI seats use the selected type with an independent Policy instance per seat. The implementation reuses the existing first-party Policy bridge from `lisjong-arena`; bridge conversion / mapping semantics are not copied into this repository.
 
 ## Initial dependency direction
 
@@ -44,7 +44,8 @@ The direct `lisjong-arena` dependency is an initial reuse decision, not a generi
 ```text
 Human EAST
 +
-MinimalPolicy x 3
+MinimalPolicy x 3 (default)
+or GenbutsuDefenseFiniteHorizonValueAwarePolicy x 3
         |
         v
 lisjong-engine
@@ -53,4 +54,4 @@ lisjong-engine
 one hanchan completion
 ```
 
-The initial slice is CLI-only and intentionally excludes seat / Policy / rule selection UI, GUI/TUI/Web UI, replay, save/resume, multiplayer, timeout recovery, and AI takeover.
+The slice is CLI-only and intentionally excludes seat selection, per-seat or arbitrary Policy selection, rule selection, GUI/TUI/Web UI, replay, save/resume, multiplayer, timeout recovery, and AI takeover.
