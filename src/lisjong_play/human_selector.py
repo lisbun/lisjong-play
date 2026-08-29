@@ -88,6 +88,7 @@ class HumanActionSelector:
         self._output_writer(render_board(observation))
         tsumogiri = self._find_tsumogiri(values)
         if tsumogiri is not None:
+            self._validate_tsumogiri(observation, tsumogiri)
             return self._choose_with_tsumogiri(values, tsumogiri)
         return self._choose_plain(values)
 
@@ -132,6 +133,16 @@ class HumanActionSelector:
                 "decision must not expose multiple tsumogiri options"
             )
         return tsumogiri[0] if tsumogiri else None
+
+    @staticmethod
+    def _validate_tsumogiri(
+        observation: SeatObservation,
+        tsumogiri: DiscardActionDescriptor,
+    ) -> None:
+        if observation.drawn_tile != tsumogiri.tile:
+            raise HumanSelectionError(
+                "tsumogiri descriptor must match SeatObservation.drawn_tile"
+            )
 
     def _choose_pure_discard(
         self,
@@ -179,10 +190,8 @@ class HumanActionSelector:
         options: tuple[DiscardActionDescriptor, ...],
     ) -> _DiscardMenuChoices:
         tsumogiri = self._find_tsumogiri(tuple(options))
-        if tsumogiri is not None and observation.drawn_tile != tsumogiri.tile:
-            raise HumanSelectionError(
-                "tsumogiri descriptor must match SeatObservation.drawn_tile"
-            )
+        if tsumogiri is not None:
+            self._validate_tsumogiri(observation, tsumogiri)
 
         numbered = tuple(
             sorted(
