@@ -9,6 +9,8 @@ from lisjong_engine.public_state import PublicDiscard, PublicRiichiStatus, Publi
 from lisjong_engine.round_completion import (
     MatchCompletionFact,
     RoundCompletionFact,
+    RoundCompletionScoreCandidate,
+    RoundCompletionWinner,
     RoundOutcomeKind,
 )
 from lisjong_engine.round_progress import (
@@ -22,7 +24,9 @@ from lisjong_engine.round_progress import (
     RiichiFailedProgress,
     RoundProgressFact,
 )
+from lisjong_engine.score import ScoreLimit
 from lisjong_engine.seat import Seat
+from lisjong_engine.settlement import TransferReason
 from lisjong_engine.win_context import WinMethod
 
 from lisjong_play.formatting import (
@@ -49,6 +53,22 @@ _RIICHI_LABELS = {
     PublicRiichiStatus.ESTABLISHED: "立直",
 }
 _WIN_METHOD_LABELS = {WinMethod.TSUMO: "ツモ", WinMethod.RON: "ロン"}
+_SCORE_LIMIT_LABELS = {
+    ScoreLimit.MANGAN: "満貫",
+    ScoreLimit.HANEMAN: "跳満",
+    ScoreLimit.BAIMAN: "倍満",
+    ScoreLimit.SANBAIMAN: "三倍満",
+    ScoreLimit.YAKUMAN: "役満",
+}
+_TRANSFER_REASON_LABELS = {
+    TransferReason.RON: "ロン",
+    TransferReason.TSUMO: "ツモ",
+    TransferReason.PAO_RON: "パオ・ロン",
+    TransferReason.PAO_TSUMO: "パオ・ツモ",
+    TransferReason.HONBA: "本場",
+    TransferReason.NOTEN_PENALTY: "不聴罰符",
+    TransferReason.NAGASHI_MANGAN: "流し満貫",
+}
 _RIVER_WRAP_SIZE = 6
 _RIVER_CELL_WIDTH = 10
 RIVER_LEGEND = "河の表記: * = ツモ切り / [] = 立直宣言牌 / →Pn = 鳴かれた牌"
@@ -305,6 +325,159 @@ def render_progress_fact(fact: RoundProgressFact) -> str:
     )
 
 
+def _format_yakuman_units(units: int) -> str:
+    if units == 1:
+        return "役満"
+    if units == 2:
+        return "ダブル役満"
+    return f"{units}倍役満"
+
+
+def _format_yaku_value(candidate_yaku: object) -> str:
+    han = getattr(candidate_yaku, "han")
+    if han is not None:
+        return f"{han}翻"
+    yakuman_units = getattr(candidate_yaku, "yakuman_units")
+    assert yakuman_units is not None
+    if yakuman_units == 1:
+        return "役満"
+    return f"{yakuman_units}倍役満"
+
+
+def _render_score_candidate(candidate: RoundCompletionScoreCandidate) -> list[str]:
+    lines = ["役:"]
+    for yaku in candidate.yaku:
+        lines.append(f"  {yaku.japanese_name}: {_format_yaku_value(yaku)}")
+
+    if candidate.dora_count is not None:
+        dora = candidate.dora_count
+        lines.extend(
+            (
+                "ドラ:",
+                f"  表ドラ: {dora.visible}",
+                f"  裏ドラ: {dora.ura}",
+                f"  赤ドラ: {dora.red}",
+                f"  槓ドラ: {dora.kan}",
+                f"  槓裏ドラ: {dora.kan_ura}",
+                (
+                    "  合計: "
+                    f"{dora.visible + dora.ura + dora.red + dora.kan + dora.kan_ura}翻"
+                ),
+            )
+        )
+
+    if candidate.yakuman_units is not None:
+        lines.append(_format_yakuman_units(candidate.yakuman_units))
+    else:
+        assert candidate.total_han is not None
+        assert candidate.rounded_fu is not None
+        score_summary = f"{candidate.total_han}翻 {candidate.rounded_fu}符"
+        if candidate.score_limit is not ScoreLimit.NONE:
+            try:
+                limit_label = _SCORE_LIMIT_LABELS[candidate.score_limit]
+            except KeyError:
+                raise UnsupportedDeliveryItemError(
+                    f"unsupported score limit: {candidate.score_limit!r}"
+                ) from None
+            score_summary += f" / {limit_label}"
+        lines.append(score_summary)
+
+    if candidate.ron_payment is not None:
+        lines.append(f"手役得点: ロン {candidate.ron_payment}点")
+    elif candidate.tsumo_dealer_payment is None:
+        assert candidate.tsumo_non_dealer_payment is not None
+        lines.append(f"手役得点: ツモ {candidate.tsumo_non_dealer_payment}点オール")
+    else:
+        assert candidate.tsumo_non_dealer_payment is not None
+        lines.append(
+            "手役得点: ツモ "
+            f"親 {candidate.tsumo_dealer_payment}点 / "
+            f"子 {candidate.tsumo_non_dealer_payment}点"
+        )
+    return lines
+
+
+def _render_winner_detail(
+    fact: RoundCompletionFact,
+    winner: RoundCompletionWinner,
+) -> list[str]:
+    if winner.winning_tile is None:
+        return []
+
+    heading = (
+        f"和了: {round_seat_label(winner.seat, fact.dealer_seat)} "
+        f"{_WIN_METHOD_LABELS[winner.win_method]}"
+    )
+    if winner.win_method is WinMethod.RON and fact.source_seat is not None:
+        heading += f" / 放銃 {round_seat_label(fact.source_seat, fact.dealer_seat)}"
+
+    sorted_hand = tuple(sorted(winner.concealed_tiles, key=tile_sort_key))
+    melds = " | ".join(format_meld(meld) for meld in winner.declared_melds) or "なし"
+    lines = [
+        "",
+        heading,
+        f"和了牌: {format_tile(winner.winning_tile)}",
+        f"和了手牌: {format_tiles(sorted_hand)}",
+        f"副露: {melds}",
+    ]
+
+    candidate_count = len(winner.max_score_candidates)
+    for index, candidate in enumerate(winner.max_score_candidates, start=1):
+        lines.append("")
+        if candidate_count > 1:
+            lines.append(f"最高得点解釈 {index}/{candidate_count}:")
+        lines.extend(_render_score_candidate(candidate))
+    return lines
+
+
+def _render_revealed_dora_indicators(fact: RoundCompletionFact) -> list[str]:
+    indicators = fact.revealed_dora_indicators
+    if indicators is None:
+        return []
+
+    entries = (
+        ("表ドラ表示牌", indicators.visible),
+        ("槓ドラ表示牌", indicators.kan),
+        ("裏ドラ表示牌", indicators.ura),
+        ("槓裏ドラ表示牌", indicators.kan_ura),
+    )
+    rendered = [
+        f"  {label}: {' '.join(format_tile(tile) for tile in tiles)}"
+        for label, tiles in entries
+        if tiles
+    ]
+    if not rendered:
+        return []
+    return ["", "公開ドラ表示牌:", *rendered]
+
+
+def _render_round_settlement(fact: RoundCompletionFact) -> list[str]:
+    if not fact.settlement_transfers and not fact.riichi_stick_awards:
+        return []
+
+    lines = ["", "局精算:"]
+    for transfer in fact.settlement_transfers:
+        try:
+            reason = _TRANSFER_REASON_LABELS[transfer.reason]
+        except KeyError:
+            raise UnsupportedDeliveryItemError(
+                f"unsupported transfer reason: {transfer.reason!r}"
+            ) from None
+        lines.append(
+            "  "
+            f"{round_seat_label(transfer.payer, fact.dealer_seat)} → "
+            f"{round_seat_label(transfer.recipient, fact.dealer_seat)} "
+            f"{transfer.amount}点（{reason}）"
+        )
+    for award in fact.riichi_stick_awards:
+        lines.append(
+            "  供託 → "
+            f"{round_seat_label(award.recipient, fact.dealer_seat)} "
+            f"{award.amount}点"
+        )
+    return lines
+
+
 def render_round_completion(fact: RoundCompletionFact) -> str:
     if not isinstance(fact, RoundCompletionFact):
         raise TypeError("fact must be a RoundCompletionFact")
@@ -322,6 +495,10 @@ def render_round_completion(fact: RoundCompletionFact) -> str:
         lines.append(f"結果: 和了 {winners}")
         if fact.source_seat is not None:
             lines.append(f"放銃: {format_seat(fact.source_seat)}")
+        for winner in fact.winners:
+            lines.extend(_render_winner_detail(fact, winner))
+        lines.extend(_render_revealed_dora_indicators(fact))
+        lines.extend(_render_round_settlement(fact))
     elif fact.outcome is RoundOutcomeKind.EXHAUSTIVE_DRAW:
         lines.append("結果: 流局")
         tenpai = ", ".join(format_seat(seat) for seat in fact.tenpai_seats) or "なし"
