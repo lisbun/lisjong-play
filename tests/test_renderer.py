@@ -22,8 +22,8 @@ from lisjong_engine.tile import TileCategory
 from lisjong_engine.wind import Wind
 
 from lisjong_play.renderer import (
-    DeliveryPresenter,
     RIVER_LEGEND,
+    DeliveryPresenter,
     render_board,
     render_discard_menu,
     render_reaction_board,
