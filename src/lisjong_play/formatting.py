@@ -1,7 +1,5 @@
 """Player-safe engine valuesをCLI表示へ変換するpure formatter。"""
 
-from collections.abc import Callable
-
 from lisjong_engine.action_descriptor import (
     ActionDescriptor,
     AnkanActionDescriptor,
@@ -85,18 +83,12 @@ def format_tiles(tiles: tuple[PublicTile, ...]) -> str:
     return " ".join(format_tile(tile) for tile in sorted(tiles, key=tile_sort_key))
 
 
-def format_meld(
-    meld: PublicMeld,
-    *,
-    seat_formatter: Callable[[Seat], str] = format_seat,
-) -> str:
+def format_meld(meld: PublicMeld) -> str:
     if not isinstance(meld, PublicMeld):
         raise TypeError("meld must be a PublicMeld")
-    if not callable(seat_formatter):
-        raise TypeError("seat_formatter must be callable")
     parts = [_MELD_LABELS[meld.meld_type], format_tiles(meld.tiles)]
     if meld.from_seat is not None:
-        parts.append(f"from {seat_formatter(meld.from_seat)}")
+        parts.append(f"from {format_seat(meld.from_seat)}")
     if meld.called_tile is not None:
         parts.append(f"called {format_tile(meld.called_tile)}")
     return " / ".join(parts)
