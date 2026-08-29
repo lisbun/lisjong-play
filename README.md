@@ -2,7 +2,7 @@
 
 Human Play consumer for the lisjong ecosystem.
 
-The initial vertical slice is deliberately small: **Human EAST vs `MinimalPolicy` x3**, one hanchan, using the first-party `lisjong-engine` and its default `RuleSet`.
+The playable slice is deliberately small: **Human EAST vs one selected first-party Policy x3**, one hanchan, using the first-party `lisjong-engine` and its default `RuleSet`.
 
 ## Run
 
@@ -11,9 +11,14 @@ Python 3.14 is required.
 ```powershell
 python -m pip install -e ".[dev]"
 python -m lisjong_play
+python -m lisjong_play --opponent minimal
+python -m lisjong_play --opponent combined
+python -m lisjong_play --opponent combined --seed 12345
 ```
 
-The default match seed is `0`. To replay another deterministic match:
+The opponent defaults to `minimal`, preserving the original Human EAST vs `MinimalPolicy` x3 behavior. `combined` selects `GenbutsuDefenseFiniteHorizonValueAwarePolicy` for all three AI seats. Each AI seat receives an independent Policy instance and runs through the existing first-party bridge from `lisjong-arena`.
+
+The default match seed is `0`. To replay another deterministic match with the default opponent:
 
 ```powershell
 python -m lisjong_play --seed 12345
