@@ -26,8 +26,9 @@ def observation(
     decision_kind: ObservationDecisionKind = ObservationDecisionKind.TURN,
     self_riichi: PublicRiichiStatus = PublicRiichiStatus.NONE,
     drawn: PublicTile | None = None,
+    hand_tiles: tuple[PublicTile, ...] | None = None,
 ) -> SeatObservation:
-    hand_tile = drawn or tile()
+    actual_hand_tiles = hand_tiles if hand_tiles is not None else (drawn or tile(),)
     drawn_tile = (
         None
         if decision_kind
@@ -44,7 +45,7 @@ def observation(
         hand_number=1,
         honba=0,
         riichi_sticks=0,
-        hand_tiles=(hand_tile,),
+        hand_tiles=actual_hand_tiles,
         drawn_tile=drawn_tile,
         discards=tuple(SeatDiscards(seat, ()) for seat in Seat),
         melds=tuple(SeatMelds(seat, ()) for seat in Seat),
