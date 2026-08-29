@@ -5,6 +5,7 @@ from lisjong_engine.seat import Seat
 
 from lisjong_play.cli import main
 from lisjong_play.human_selector import HumanActionSelector
+from lisjong_play.renderer import RIVER_LEGEND
 from lisjong_play.session import build_seat_selectors, run_cli_session
 
 
@@ -41,6 +42,7 @@ class SessionTest(unittest.TestCase):
             output_writer=output.append,
         )
 
+        self.assertEqual(1, output.count(RIVER_LEGEND))
         self.assertTrue(any("半荘終了" in line for line in output))
         self.assertTrue(
             any("位" in line for line in output if "最終" in line or "位" in line)

@@ -27,6 +27,9 @@ def observation(
     self_riichi: PublicRiichiStatus = PublicRiichiStatus.NONE,
     drawn: PublicTile | None = None,
     hand_tiles: tuple[PublicTile, ...] | None = None,
+    viewer_seat: Seat = Seat.EAST,
+    dealer_seat: Seat = Seat.EAST,
+    discards: tuple[SeatDiscards, ...] | None = None,
 ) -> SeatObservation:
     actual_hand_tiles = hand_tiles if hand_tiles is not None else (drawn or tile(),)
     drawn_tile = (
@@ -40,24 +43,28 @@ def observation(
         else drawn
     )
     return SeatObservation(
-        viewer_seat=Seat.EAST,
+        viewer_seat=viewer_seat,
         decision_kind=decision_kind,
         hand_number=1,
         honba=0,
         riichi_sticks=0,
         hand_tiles=actual_hand_tiles,
         drawn_tile=drawn_tile,
-        discards=tuple(SeatDiscards(seat, ()) for seat in Seat),
+        discards=(
+            discards
+            if discards is not None
+            else tuple(SeatDiscards(seat, ()) for seat in Seat)
+        ),
         melds=tuple(SeatMelds(seat, ()) for seat in Seat),
         dora_indicators=(tile(TileCategory.PINZU, 3),),
         remaining_live_wall_count=60,
         scores=tuple(SeatScore(seat, 25_000) for seat in Seat),
-        dealer_seat=Seat.EAST,
+        dealer_seat=dealer_seat,
         prevailing_wind=Wind.EAST,
         riichi_states=tuple(
             SeatRiichiState(
                 seat,
-                self_riichi if seat is Seat.EAST else PublicRiichiStatus.NONE,
+                self_riichi if seat is viewer_seat else PublicRiichiStatus.NONE,
             )
             for seat in Seat
         ),

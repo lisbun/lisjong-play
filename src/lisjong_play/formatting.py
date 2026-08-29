@@ -19,12 +19,8 @@ from lisjong_engine.seat import Seat
 from lisjong_engine.tile import TileCategory
 from lisjong_engine.wind import Wind
 
-_SEAT_LABELS = {
-    Seat.EAST: "東",
-    Seat.SOUTH: "南",
-    Seat.WEST: "西",
-    Seat.NORTH: "北",
-}
+from lisjong_play.seat_display import fixed_seat_name
+
 _WIND_LABELS = {
     Wind.EAST: "東",
     Wind.SOUTH: "南",
@@ -51,9 +47,7 @@ class UnsupportedActionDescriptorError(TypeError):
 
 
 def format_seat(seat: Seat) -> str:
-    if not isinstance(seat, Seat):
-        raise TypeError("seat must be a Seat")
-    return _SEAT_LABELS[seat]
+    return fixed_seat_name(seat)
 
 
 def format_wind(wind: Wind) -> str:

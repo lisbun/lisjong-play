@@ -9,7 +9,7 @@ from lisjong_engine.match_state import MatchState
 from lisjong_engine.seat import Seat
 
 from lisjong_play.human_selector import HumanActionSelector
-from lisjong_play.renderer import DeliveryPresenter
+from lisjong_play.renderer import RIVER_LEGEND, DeliveryPresenter
 
 DEFAULT_SEED = 0
 
@@ -44,4 +44,5 @@ def run_cli_session(
     )
     presenter = DeliveryPresenter(input_reader, output_writer)
     match_state = MatchState(seed=seed, rules=None)
+    output_writer(RIVER_LEGEND)
     run_hanchan(match_state, selectors, on_delivery=presenter)
