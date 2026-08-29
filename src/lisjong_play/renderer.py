@@ -110,9 +110,7 @@ def _render_board(
             (
                 "ドラ表示牌: "
                 + (
-                    " ".join(
-                        format_tile(tile) for tile in observation.dora_indicators
-                    )
+                    " ".join(format_tile(tile) for tile in observation.dora_indicators)
                     or "なし"
                 ),
                 f"残り山: {observation.remaining_live_wall_count}",
@@ -163,7 +161,9 @@ def render_discard_menu(
         raise ValueError("hand_tiles and hand_numbers must have the same length")
 
     tile_tokens = [format_tile(tile) for tile in hand_tiles]
-    number_tokens = [str(number) if number is not None else "-" for number in hand_numbers]
+    number_tokens = [
+        str(number) if number is not None else "-" for number in hand_numbers
+    ]
     if tsumogiri_tile is not None:
         tile_tokens.extend(("|", format_tile(tsumogiri_tile)))
         number_tokens.extend(("|", "Enter"))
