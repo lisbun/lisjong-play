@@ -81,9 +81,7 @@ class HumanActionSelector:
         if is_pure_discard:
             self._output_writer(render_board(observation, include_hand=False))
             discard_values = tuple(
-                value
-                for value in values
-                if isinstance(value, DiscardActionDescriptor)
+                value for value in values if isinstance(value, DiscardActionDescriptor)
             )
             return self._choose_pure_discard(observation, discard_values)
 
