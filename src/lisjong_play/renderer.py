@@ -149,7 +149,9 @@ def _render_rivers(observation: SeatObservation) -> list[str]:
         continuation = " " * _display_width(prefix)
         for row_index, row in enumerate(rows):
             rendered = " ".join(
-                _pad_right(_format_discard(cell) if cell is not None else "", _RIVER_CELL_WIDTH)
+                _pad_right(
+                    _format_discard(cell) if cell is not None else "", _RIVER_CELL_WIDTH
+                )
                 for cell in row
             ).rstrip()
             lines.append((prefix if row_index == 0 else continuation) + rendered)
