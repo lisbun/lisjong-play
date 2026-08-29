@@ -147,7 +147,9 @@ class RendererTest(unittest.TestCase):
             ]
         )
         river_lines = _river_lines(render_board(observation(discards=discards)))
-        south_line = next(line for line in river_lines if line.startswith("  P2（南家）:"))
+        south_line = next(
+            line for line in river_lines if line.startswith("  P2（南家）:")
+        )
         river = south_line.split(": ", 1)[1]
         self.assertEqual(11, _display_width(river[: river.index("5m")]))
 
@@ -170,9 +172,7 @@ class RendererTest(unittest.TestCase):
             render_board(observation(discards=_seat_discards(entries)))
         )
         east_index = next(
-            i
-            for i, line in enumerate(river_lines)
-            if line.startswith("  P1（東家）:")
+            i for i, line in enumerate(river_lines) if line.startswith("  P1（東家）:")
         )
         self.assertTrue(river_lines[east_index + 1].startswith(" " * 14))
         self.assertIn("7", river_lines[east_index + 1])
@@ -187,8 +187,12 @@ class RendererTest(unittest.TestCase):
             ]
         )
         river_lines = _river_lines(render_board(observation(discards=discards)))
-        east_line = next(line for line in river_lines if line.startswith("  P1（東家）:"))
-        south_line = next(line for line in river_lines if line.startswith("  P2（南家）:"))
+        east_line = next(
+            line for line in river_lines if line.startswith("  P1（東家）:")
+        )
+        south_line = next(
+            line for line in river_lines if line.startswith("  P2（南家）:")
+        )
         self.assertIn("[5pr*]→P2", east_line)
         self.assertIn("東", south_line)
         self.assertNotIn(RIVER_LEGEND, "\n".join(river_lines))
