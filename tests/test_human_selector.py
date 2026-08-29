@@ -12,7 +12,7 @@ from lisjong_engine.observation import ObservationDecisionKind
 from lisjong_engine.public_state import PublicRiichiStatus
 from lisjong_engine.seat import Seat
 
-from lisjong_play.human_selector import HumanActionSelector
+from lisjong_play.human_selector import HumanActionSelector, HumanSelectionError
 from tests._fixtures import observation, tile
 
 
@@ -184,6 +184,18 @@ class HumanActionSelectorTest(unittest.TestCase):
         self.assertIn("2. 暗槓", menu)
         self.assertNotIn("打牌 5m（ツモ切り）", menu)
         self.assertIn("Enter=ツモ切り", inputs.prompts[0])
+
+    def test_mixed_turn_rejects_tsumogiri_that_does_not_match_drawn_tile(self) -> None:
+        drawn = tile(rank=5)
+        inconsistent = DiscardActionDescriptor(tile(rank=6), True)
+        tsumo = TsumoActionDescriptor(drawn)
+        selector = HumanActionSelector(_Inputs([]), lambda _: None)
+
+        with self.assertRaises(HumanSelectionError):
+            selector(
+                observation(drawn=drawn, hand_tiles=(drawn, tile(rank=6))),
+                (inconsistent, tsumo),
+            )
 
     def test_tsumogiri_only_still_waits_for_enter(self) -> None:
         drawn = tile(rank=5)
