@@ -24,6 +24,8 @@ selected ActionDescriptor
 
 Human choice does not pass through `PolicyInput`, `DecisionContext`, `InternalAction`, or `execute_policy()`.
 
+Round completion presentation consumes `lisjong-engine.round_completion.RoundCompletionFact` as the player-safe authority. Win result rendering may display the projected winner hand, winning tile, yaku, han / fu or yakuman units, dora counts, revealed indicator tiles, base hand payments, settlement transfers, and riichi-stick awards. `lisjong-play` does not read `CompletedRound` / `RoundState`, recalculate scoring or dora, infer ura disclosure, or choose an arbitrary representative from equal maximum-score interpretations.
+
 AI seats use real `lisjong.Policy` implementations. The CLI explicitly supports `minimal` and `combined`; all three AI seats use the selected type with an independent Policy instance per seat. The implementation reuses the existing first-party Policy bridge from `lisjong-arena`; bridge conversion / mapping semantics are not copied into this repository.
 
 ## Initial dependency direction
