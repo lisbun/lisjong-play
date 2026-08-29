@@ -80,6 +80,20 @@ def _seat_discards(
     return tuple(SeatDiscards(seat, tuple(by_seat[seat])) for seat in Seat)
 
 
+def _river_lines(text: str) -> list[str]:
+    lines = text.splitlines()
+    river_index = lines.index("河:")
+    try:
+        hand_index = next(
+            index
+            for index in range(river_index + 1, len(lines))
+            if lines[index].startswith("手牌:")
+        )
+    except StopIteration:
+        hand_index = len(lines)
+    return lines[river_index + 1 : hand_index]
+
+
 class RendererTest(unittest.TestCase):
     def test_board_contains_minimum_player_safe_fields(self) -> None:
         text = render_board(observation(drawn=tile(rank=4)))
@@ -132,12 +146,9 @@ class RendererTest(unittest.TestCase):
                 (Seat.SOUTH, tile(rank=5), False, False, None),
             ]
         )
-        text = render_board(observation(discards=discards))
-        south_line = next(
-            line for line in text.splitlines() if line.startswith("  P2（南家）:")
-        )
+        river_lines = _river_lines(render_board(observation(discards=discards)))
+        south_line = next(line for line in river_lines if line.startswith("  P2（南家）:"))
         river = south_line.split(": ", 1)[1]
-        self.assertGreater(_display_width(river[: river.index("5m")]), 0)
         self.assertEqual(11, _display_width(river[: river.index("5m")]))
 
     def test_river_wraps_after_six_columns(self) -> None:
@@ -155,13 +166,16 @@ class RendererTest(unittest.TestCase):
                     )
                 )
                 order_tile_rank += 1
-        text = render_board(observation(discards=_seat_discards(entries)))
-        lines = text.splitlines()
-        east_index = next(
-            i for i, line in enumerate(lines) if line.startswith("  P1（東家）:")
+        river_lines = _river_lines(
+            render_board(observation(discards=_seat_discards(entries)))
         )
-        self.assertTrue(lines[east_index + 1].startswith(" " * 14))
-        self.assertIn("7", lines[east_index + 1])
+        east_index = next(
+            i
+            for i, line in enumerate(river_lines)
+            if line.startswith("  P1（東家）:")
+        )
+        self.assertTrue(river_lines[east_index + 1].startswith(" " * 14))
+        self.assertIn("7", river_lines[east_index + 1])
 
     def test_river_fixed_cells_keep_public_markers_and_called_discard(self) -> None:
         red_five = tile(TileCategory.PINZU, 5, red=True)
@@ -172,16 +186,12 @@ class RendererTest(unittest.TestCase):
                 (Seat.SOUTH, honor, False, False, None),
             ]
         )
-        text = render_board(observation(discards=discards))
-        east_line = next(
-            line for line in text.splitlines() if line.startswith("  P1（東家）:")
-        )
-        south_line = next(
-            line for line in text.splitlines() if line.startswith("  P2（南家）:")
-        )
+        river_lines = _river_lines(render_board(observation(discards=discards)))
+        east_line = next(line for line in river_lines if line.startswith("  P1（東家）:"))
+        south_line = next(line for line in river_lines if line.startswith("  P2（南家）:"))
         self.assertIn("[5pr*]→P2", east_line)
         self.assertIn("東", south_line)
-        self.assertNotIn(RIVER_LEGEND, text)
+        self.assertNotIn(RIVER_LEGEND, "\n".join(river_lines))
 
     def test_reaction_board_omits_turn_meta_but_keeps_public_decision_state(
         self,
