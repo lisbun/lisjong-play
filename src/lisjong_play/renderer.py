@@ -22,6 +22,7 @@ from lisjong_engine.round_progress import (
     RiichiFailedProgress,
     RoundProgressFact,
 )
+from lisjong_engine.seat import Seat
 from lisjong_engine.win_context import WinMethod
 
 from lisjong_play.formatting import (
@@ -33,6 +34,7 @@ from lisjong_play.formatting import (
     format_wind,
     tile_sort_key,
 )
+from lisjong_play.seat_display import fixed_seat_name, round_seat_label
 
 _DECISION_LABELS = {
     ObservationDecisionKind.TURN: "自摸番",
@@ -47,6 +49,9 @@ _RIICHI_LABELS = {
     PublicRiichiStatus.ESTABLISHED: "立直",
 }
 _WIN_METHOD_LABELS = {WinMethod.TSUMO: "ツモ", WinMethod.RON: "ロン"}
+_RIVER_WRAP_SIZE = 6
+_RIVER_CELL_WIDTH = 10
+RIVER_LEGEND = "河の表記: * = ツモ切り / [] = 立直宣言牌 / →Pn = 鳴かれた牌"
 
 
 class UnsupportedDeliveryItemError(TypeError):
@@ -64,6 +69,10 @@ def _pad_left(text: str, width: int) -> str:
     return " " * max(0, width - _display_width(text)) + text
 
 
+def _pad_right(text: str, width: int) -> str:
+    return text + " " * max(0, width - _display_width(text))
+
+
 def _format_discard(discard: PublicDiscard) -> str:
     tile = format_tile(discard.tile)
     if discard.is_tsumogiri:
@@ -71,8 +80,80 @@ def _format_discard(discard: PublicDiscard) -> str:
     if discard.is_riichi_declaration:
         tile = f"[{tile}]"
     if discard.called_by is not None:
-        tile += f"→{format_seat(discard.called_by)}"
+        tile += f"→{fixed_seat_name(discard.called_by)}"
     return tile
+
+
+def _seat_ranks_from_dealer(dealer_seat: Seat) -> dict[Seat, int]:
+    seats = tuple(Seat)
+    start_index = seats.index(dealer_seat)
+    return {seats[(start_index + offset) % len(seats)]: offset for offset in range(4)}
+
+
+def _build_river_cells(
+    observation: SeatObservation,
+) -> dict[Seat, tuple[PublicDiscard | None, ...]]:
+    """PublicDiscard.orderだけを正本に、巡目相当の表示列を組み立てる。
+
+    global discard orderを順に見て、dealer起点の席順位が前回より後なら同じ列、
+    同順位または前へ戻るなら次列へ進める。鳴き・槓等のnon-discard event自体を
+    復元する情報はSeatObservationにないため、それらを推測して補完はしない。
+    """
+    ordered = sorted(
+        (
+            discard.order,
+            seat_discards.seat,
+            discard,
+        )
+        for seat_discards in observation.discards
+        for discard in seat_discards.discards
+    )
+    if not ordered:
+        return {seat: () for seat in Seat}
+
+    rank_by_seat = _seat_ranks_from_dealer(observation.dealer_seat)
+    assignments: list[tuple[Seat, int, PublicDiscard]] = []
+    current_column = 0
+    previous_rank: int | None = None
+    for _, seat, discard in ordered:
+        rank = rank_by_seat[seat]
+        if previous_rank is not None and rank <= previous_rank:
+            current_column += 1
+        assignments.append((seat, current_column, discard))
+        previous_rank = rank
+
+    total_columns = current_column + 1
+    cells: dict[Seat, list[PublicDiscard | None]] = {
+        seat: [None] * total_columns for seat in Seat
+    }
+    for seat, column, discard in assignments:
+        cells[seat][column] = discard
+    return {seat: tuple(values) for seat, values in cells.items()}
+
+
+def _render_rivers(observation: SeatObservation) -> list[str]:
+    lines = ["河:"]
+    cells_by_seat = _build_river_cells(observation)
+    for seat in Seat:
+        label = round_seat_label(seat, observation.dealer_seat)
+        prefix = f"  {label}: "
+        cells = cells_by_seat[seat]
+        if not cells:
+            lines.append(prefix + "-")
+            continue
+
+        rows = tuple(
+            cells[index : index + _RIVER_WRAP_SIZE]
+            for index in range(0, len(cells), _RIVER_WRAP_SIZE)
+        )
+        continuation = " " * _display_width(prefix)
+        for row_index, row in enumerate(rows):
+            rendered = " ".join(
+                _pad_right(_format_discard(cell) if cell is not None else "", _RIVER_CELL_WIDTH)
+                for cell in row
+            ).rstrip()
+            lines.append((prefix if row_index == 0 else continuation) + rendered)
+    return lines
 
 
 def render_board(observation: SeatObservation, *, include_hand: bool = True) -> str:
@@ -100,9 +181,12 @@ def _render_board(
             f"{observation.honba}本場 / 供託 {observation.riichi_sticks} ==="
         ),
         f"判断: {_DECISION_LABELS[observation.decision_kind]}",
+        f"あなた: {round_seat_label(observation.viewer_seat, observation.dealer_seat)}",
+        f"親: {round_seat_label(observation.dealer_seat, observation.dealer_seat)}",
         "点数: "
         + " / ".join(
-            f"{format_seat(score.seat)} {score.points}" for score in observation.scores
+            f"{round_seat_label(score.seat, observation.dealer_seat)} {score.points}"
+            for score in observation.scores
         ),
     ]
     if include_meta:
@@ -119,7 +203,8 @@ def _render_board(
     lines.append(
         "立直: "
         + " / ".join(
-            f"{format_seat(state.seat)}={_RIICHI_LABELS[state.status]}"
+            f"{round_seat_label(state.seat, observation.dealer_seat)}="
+            f"{_RIICHI_LABELS[state.status]}"
             for state in observation.riichi_states
         )
     )
@@ -127,14 +212,12 @@ def _render_board(
     lines.append("副露:")
     for seat_melds in observation.melds:
         meld_text = " | ".join(format_meld(meld) for meld in seat_melds.melds) or "なし"
-        lines.append(f"  {format_seat(seat_melds.seat)}: {meld_text}")
-
-    lines.append("河:  * = ツモ切り / [] = 立直宣言牌 / → = 鳴かれた牌")
-    for seat_discards in observation.discards:
-        river = (
-            " ".join(_format_discard(item) for item in seat_discards.discards) or "-"
+        lines.append(
+            f"  {round_seat_label(seat_melds.seat, observation.dealer_seat)}: "
+            f"{meld_text}"
         )
-        lines.append(f"  {format_seat(seat_discards.seat)}: {river}")
+
+    lines.extend(_render_rivers(observation))
 
     if include_hand:
         sorted_hand = tuple(sorted(observation.hand_tiles, key=tile_sort_key))
