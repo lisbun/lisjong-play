@@ -1,10 +1,11 @@
 """SeatObservation / ordered delivery factsのCLI presentation。"""
 
+import unicodedata
 from collections.abc import Callable, Iterable
 
 from lisjong_engine.action_descriptor import ActionDescriptor
 from lisjong_engine.observation import ObservationDecisionKind, SeatObservation
-from lisjong_engine.public_state import PublicDiscard, PublicRiichiStatus
+from lisjong_engine.public_state import PublicDiscard, PublicRiichiStatus, PublicTile
 from lisjong_engine.round_completion import (
     MatchCompletionFact,
     RoundCompletionFact,
@@ -52,6 +53,17 @@ class UnsupportedDeliveryItemError(TypeError):
     """current CLIが知らないplayer-safe delivery itemを受け取った場合。"""
 
 
+def _display_width(text: str) -> int:
+    width = 0
+    for char in text:
+        width += 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+    return width
+
+
+def _pad_left(text: str, width: int) -> str:
+    return " " * max(0, width - _display_width(text)) + text
+
+
 def _format_discard(discard: PublicDiscard) -> str:
     tile = format_tile(discard.tile)
     if discard.is_tsumogiri:
@@ -63,7 +75,22 @@ def _format_discard(discard: PublicDiscard) -> str:
     return tile
 
 
-def render_board(observation: SeatObservation) -> str:
+def render_board(observation: SeatObservation, *, include_hand: bool = True) -> str:
+    """通常decision向けのplayer-safe盤面を表示する。"""
+    return _render_board(observation, include_meta=True, include_hand=include_hand)
+
+
+def render_reaction_board(observation: SeatObservation) -> str:
+    """reaction判断向けにmeta情報を省いたcompact盤面を表示する。"""
+    return _render_board(observation, include_meta=False, include_hand=True)
+
+
+def _render_board(
+    observation: SeatObservation,
+    *,
+    include_meta: bool,
+    include_hand: bool,
+) -> str:
     if not isinstance(observation, SeatObservation):
         raise TypeError("observation must be a SeatObservation")
 
@@ -77,18 +104,27 @@ def render_board(observation: SeatObservation) -> str:
         + " / ".join(
             f"{format_seat(score.seat)} {score.points}" for score in observation.scores
         ),
-        "ドラ表示牌: "
-        + (
-            " ".join(format_tile(tile) for tile in observation.dora_indicators)
-            or "なし"
-        ),
-        f"残り山: {observation.remaining_live_wall_count}",
+    ]
+    if include_meta:
+        lines.extend(
+            (
+                "ドラ表示牌: "
+                + (
+                    " ".join(
+                        format_tile(tile) for tile in observation.dora_indicators
+                    )
+                    or "なし"
+                ),
+                f"残り山: {observation.remaining_live_wall_count}",
+            )
+        )
+    lines.append(
         "立直: "
         + " / ".join(
             f"{format_seat(state.seat)}={_RIICHI_LABELS[state.status]}"
             for state in observation.riichi_states
-        ),
-    ]
+        )
+    )
 
     lines.append("副露:")
     for seat_melds in observation.melds:
@@ -102,24 +138,60 @@ def render_board(observation: SeatObservation) -> str:
         )
         lines.append(f"  {format_seat(seat_discards.seat)}: {river}")
 
-    sorted_hand = tuple(sorted(observation.hand_tiles, key=tile_sort_key))
-    lines.append(f"手牌: {format_tiles(sorted_hand)}")
-    lines.append(
-        "ツモ: "
-        + (
-            format_tile(observation.drawn_tile)
-            if observation.drawn_tile is not None
-            else "-"
+    if include_hand:
+        sorted_hand = tuple(sorted(observation.hand_tiles, key=tile_sort_key))
+        lines.append(f"手牌: {format_tiles(sorted_hand)}")
+        lines.append(
+            "ツモ: "
+            + (
+                format_tile(observation.drawn_tile)
+                if observation.drawn_tile is not None
+                else "-"
+            )
         )
-    )
     return "\n".join(lines)
 
 
-def render_action_menu(options: Iterable[ActionDescriptor]) -> str:
+def render_discard_menu(
+    hand_tiles: tuple[PublicTile, ...],
+    hand_numbers: tuple[int | None, ...],
+    *,
+    tsumogiri_tile: PublicTile | None,
+) -> str:
+    """通常打牌専用の手牌/番号horizontal menuを表示する。"""
+    if len(hand_tiles) != len(hand_numbers):
+        raise ValueError("hand_tiles and hand_numbers must have the same length")
+
+    tile_tokens = [format_tile(tile) for tile in hand_tiles]
+    number_tokens = [str(number) if number is not None else "-" for number in hand_numbers]
+    if tsumogiri_tile is not None:
+        tile_tokens.extend(("|", format_tile(tsumogiri_tile)))
+        number_tokens.extend(("|", "Enter"))
+    if not tile_tokens:
+        raise ValueError("discard menu must contain at least one tile")
+
+    widths = [
+        max(_display_width(tile_token), _display_width(number_token))
+        for tile_token, number_token in zip(tile_tokens, number_tokens)
+    ]
+    tile_line = "手牌: " + " ".join(
+        _pad_left(token, width) for token, width in zip(tile_tokens, widths)
+    )
+    number_line = "番号: " + " ".join(
+        _pad_left(token, width) for token, width in zip(number_tokens, widths)
+    )
+    return "\n".join(("打牌を選んでください:", tile_line, number_line))
+
+
+def render_action_menu(
+    options: Iterable[ActionDescriptor],
+    *,
+    header: str = "操作を選んでください:",
+) -> str:
     values = tuple(options)
     if not values:
         raise ValueError("options must not be empty")
-    lines = ["操作を選んでください:"]
+    lines = [header]
     for number, option in enumerate(values, start=1):
         lines.append(f"  {number}. {format_action_descriptor(option)}")
     return "\n".join(lines)
