@@ -31,7 +31,7 @@ class SessionTest(unittest.TestCase):
         output: list[str] = []
 
         def scripted_input(prompt: str) -> str:
-            if prompt == "> ":
+            if prompt == "> " or "Enter" in prompt:
                 return ""
             return "1"
 
