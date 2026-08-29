@@ -82,7 +82,9 @@ class RendererTest(unittest.TestCase):
         self.assertEqual("手牌: 1m 東 5pr |    7s", lines[1])
         self.assertEqual("番号:  1  2   3 | Enter", lines[2])
 
-    def test_reaction_board_omits_turn_meta_but_keeps_public_decision_state(self) -> None:
+    def test_reaction_board_omits_turn_meta_but_keeps_public_decision_state(
+        self,
+    ) -> None:
         text = render_reaction_board(
             observation(decision_kind=ObservationDecisionKind.DISCARD_REACTION)
         )
