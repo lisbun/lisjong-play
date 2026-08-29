@@ -1,6 +1,7 @@
 import unittest
 
 from lisjong_engine.match_state import MatchEndReason
+from lisjong_engine.observation import ObservationDecisionKind
 from lisjong_engine.public_state import SeatPointDelta, SeatScore
 from lisjong_engine.round_completion import (
     MatchCompletionFact,
@@ -10,9 +11,15 @@ from lisjong_engine.round_completion import (
 )
 from lisjong_engine.round_progress import DiscardProgress, RiichiEstablishedProgress
 from lisjong_engine.seat import Seat
+from lisjong_engine.tile import TileCategory
 from lisjong_engine.wind import Wind
 
-from lisjong_play.renderer import DeliveryPresenter, render_board
+from lisjong_play.renderer import (
+    DeliveryPresenter,
+    render_board,
+    render_discard_menu,
+    render_reaction_board,
+)
 from tests._fixtures import observation, tile
 
 
@@ -58,6 +65,35 @@ class RendererTest(unittest.TestCase):
         ):
             with self.subTest(label=label):
                 self.assertIn(label, text)
+
+    def test_discard_menu_aligns_numbers_with_honor_and_red_tiles(self) -> None:
+        text = render_discard_menu(
+            (
+                tile(TileCategory.MANZU, 1),
+                tile(TileCategory.HONOR, 1),
+                tile(TileCategory.PINZU, 5, red=True),
+            ),
+            (1, 2, 3),
+            tsumogiri_tile=tile(TileCategory.SOUZU, 7),
+        )
+
+        lines = text.splitlines()
+        self.assertEqual("打牌を選んでください:", lines[0])
+        self.assertEqual("手牌: 1m 東 5pr |    7s", lines[1])
+        self.assertEqual("番号:  1  2   3 | Enter", lines[2])
+
+    def test_reaction_board_omits_turn_meta_but_keeps_public_decision_state(
+        self,
+    ) -> None:
+        text = render_reaction_board(
+            observation(decision_kind=ObservationDecisionKind.DISCARD_REACTION)
+        )
+
+        for label in ("判断: 打牌への反応", "点数", "立直", "副露", "河", "手牌"):
+            with self.subTest(label=label):
+                self.assertIn(label, text)
+        self.assertNotIn("ドラ表示牌", text)
+        self.assertNotIn("残り山", text)
 
     def test_progress_batch_is_displayed_in_given_order(self) -> None:
         output: list[str] = []
