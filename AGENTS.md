@@ -37,6 +37,16 @@ Do not expand the first slice with seat selection, Policy selection, rule select
 - Prefer focused unit tests for all public action variants plus a scripted-input integration test for the hanchan flow.
 - Follow the repository's pinned Python / Ruff configuration once `pyproject.toml` is introduced.
 
+## Test execution policy
+
+- For source code or test changes, run focused tests that directly cover the changed behavior and its immediate regression boundary during implementation and before opening or updating a Pull Request.
+- Keep local format / lint checks required by the repository configuration.
+- Treat `python -m unittest discover -s tests -v` as the full regression suite and GitHub Actions as its pre-merge source of truth. Do not require the same full suite to be run locally for every change.
+- Run the local full suite when there is a concrete reason, such as reproducing or investigating a CI failure, changing shared test infrastructure or cross-cutting behavior, working without CI, or when an Issue or the user explicitly requires it.
+- After review fixes, rerun the focused tests affected by the change and rely on GitHub Actions for full regression by default.
+- Confirm the GitHub Actions full suite passes before merge.
+- For documentation-only changes, run at least `git diff --check` and confirm that no source or test code changed.
+
 ## Historical reference
 
 The legacy `lisbun/python-study` Human CLI / `HumanPlayer` implementation is a behavior / UX / regression-knowledge reference only. Do not mechanically copy its runtime API, class hierarchy, action IDs, controller/state model, or implementation structure.
