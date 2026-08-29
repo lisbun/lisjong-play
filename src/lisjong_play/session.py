@@ -9,7 +9,7 @@ from lisjong_engine.match_state import MatchState
 from lisjong_engine.seat import Seat
 
 from lisjong_play.human_selector import HumanActionSelector
-from lisjong_play.renderer import DeliveryPresenter, RIVER_LEGEND
+from lisjong_play.renderer import RIVER_LEGEND, DeliveryPresenter
 
 DEFAULT_SEED = 0
 
