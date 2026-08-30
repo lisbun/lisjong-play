@@ -8,12 +8,16 @@ from lisjong.policies import (
     MinimalPolicy,
 )
 from lisjong_arena.lisjong_engine.policy_selector import PolicySeatSelector
-from lisjong_engine.driver import ActionSelector, run_hanchan
+from lisjong_engine.driver import ActionSelector, RoundEvidenceCallback, run_hanchan
 from lisjong_engine.match_state import MatchState
 from lisjong_engine.seat import Seat
 
 from lisjong_play.human_selector import HumanActionSelector
 from lisjong_play.renderer import RIVER_LEGEND, DeliveryPresenter
+from lisjong_play.session_history import (
+    HumanSessionHistory,
+    _HumanEastRoundHistoryRecorder,
+)
 
 DEFAULT_SEED = 0
 OpponentName = Literal["minimal", "combined"]
@@ -49,14 +53,14 @@ def build_seat_selectors(
     }
 
 
-def run_cli_session(
+def _run_cli_session(
     *,
-    seed: int = DEFAULT_SEED,
-    opponent: OpponentName = DEFAULT_OPPONENT,
-    input_reader: Callable[[str], str] = input,
-    output_writer: Callable[[str], None] = print,
+    seed: int,
+    opponent: OpponentName,
+    input_reader: Callable[[str], str],
+    output_writer: Callable[[str], None],
+    on_round_evidence_complete: RoundEvidenceCallback | None,
 ) -> None:
-    """default RuleSetでHuman EAST vs selected Policy x3を1半荘実行する。"""
     if type(seed) is not int:
         raise TypeError("seed must be an int")
     selectors = build_seat_selectors(
@@ -67,4 +71,48 @@ def run_cli_session(
     presenter = DeliveryPresenter(input_reader, output_writer)
     match_state = MatchState(seed=seed, rules=None)
     output_writer(RIVER_LEGEND)
-    run_hanchan(match_state, selectors, on_delivery=presenter)
+    if on_round_evidence_complete is None:
+        run_hanchan(match_state, selectors, on_delivery=presenter)
+        return
+    run_hanchan(
+        match_state,
+        selectors,
+        on_delivery=presenter,
+        on_round_evidence_complete=on_round_evidence_complete,
+    )
+
+
+def run_cli_session(
+    *,
+    seed: int = DEFAULT_SEED,
+    opponent: OpponentName = DEFAULT_OPPONENT,
+    input_reader: Callable[[str], str] = input,
+    output_writer: Callable[[str], None] = print,
+) -> None:
+    """default RuleSetでHuman EAST vs selected Policy x3を1半荘実行する。"""
+    _run_cli_session(
+        seed=seed,
+        opponent=opponent,
+        input_reader=input_reader,
+        output_writer=output_writer,
+        on_round_evidence_complete=None,
+    )
+
+
+def run_cli_session_with_history(
+    *,
+    seed: int = DEFAULT_SEED,
+    opponent: OpponentName = DEFAULT_OPPONENT,
+    input_reader: Callable[[str], str] = input,
+    output_writer: Callable[[str], None] = print,
+) -> HumanSessionHistory:
+    """正常終了したHuman EAST sessionのsame-process historyを返す。"""
+    recorder = _HumanEastRoundHistoryRecorder()
+    _run_cli_session(
+        seed=seed,
+        opponent=opponent,
+        input_reader=input_reader,
+        output_writer=output_writer,
+        on_round_evidence_complete=recorder,
+    )
+    return recorder.finalize()
