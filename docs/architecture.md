@@ -26,6 +26,18 @@ Human choice does not pass through `PolicyInput`, `DecisionContext`, `InternalAc
 
 Round completion presentation consumes `lisjong-engine.round_completion.RoundCompletionFact` as the player-safe authority. Win result rendering may display the projected winner hand, winning tile, yaku, han / fu or yakuman units, dora counts, revealed indicator tiles, base hand payments, settlement transfers, and riichi-stick awards. `lisjong-play` does not read `CompletedRound` / `RoundState`, recalculate scoring or dora, infer ura disclosure, or choose an arbitrary representative from equal maximum-score interpretations.
 
+Live Human presentation and post-session history use separate engine-owned player-safe contracts:
+
+```text
+live Human presentation
+    <- RoundProgressFact / completion delivery
+
+same-process Human round history
+    <- Human EAST RoundEvidence
+```
+
+The opt-in session history narrows each `RoundEvidenceCompletion` to the Human EAST projection as soon as it is delivered, retains engine-provided round identity and evidence order, and becomes available only after a successful hanchan return. It is an in-memory read-oriented boundary, not a decision trace, AI analysis, persisted replay, or generic replay system.
+
 AI seats use real `lisjong.Policy` implementations. The CLI explicitly supports `minimal` and `combined`; all three AI seats use the selected type with an independent Policy instance per seat. The implementation reuses the existing first-party Policy bridge from `lisjong-arena`; bridge conversion / mapping semantics are not copied into this repository.
 
 ## Initial dependency direction
@@ -56,4 +68,4 @@ lisjong-engine
 one hanchan completion
 ```
 
-The slice is CLI-only and intentionally excludes seat selection, per-seat or arbitrary Policy selection, rule selection, GUI/TUI/Web UI, replay, save/resume, multiplayer, timeout recovery, and AI takeover.
+The slice is CLI-only and intentionally excludes seat selection, per-seat or arbitrary Policy selection, rule selection, GUI/TUI/Web UI, persisted replay, save/resume, multiplayer, timeout recovery, and AI takeover. The dedicated same-process Human EAST history boundary above does not add replay persistence or reconstruction.
