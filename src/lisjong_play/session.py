@@ -6,6 +6,7 @@ from typing import Literal
 from lisjong.policies import (
     GenbutsuDefenseFiniteHorizonValueAwarePolicy,
     MinimalPolicy,
+    YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy,
 )
 from lisjong_arena.lisjong_engine.policy_selector import PolicySeatSelector
 from lisjong_engine.driver import ActionSelector, RoundEvidenceCallback, run_hanchan
@@ -20,19 +21,25 @@ from lisjong_play.session_history import (
 )
 
 DEFAULT_SEED = 0
-OpponentName = Literal["minimal", "combined"]
+OpponentName = Literal["minimal", "combined", "yakuhai-call"]
 DEFAULT_OPPONENT: OpponentName = "minimal"
-OPPONENT_CHOICES: tuple[OpponentName, ...] = ("minimal", "combined")
+OPPONENT_CHOICES: tuple[OpponentName, ...] = ("minimal", "combined", "yakuhai-call")
 
 
 def _create_opponent_policy(
     opponent: OpponentName,
-) -> MinimalPolicy | GenbutsuDefenseFiniteHorizonValueAwarePolicy:
+) -> (
+    MinimalPolicy
+    | GenbutsuDefenseFiniteHorizonValueAwarePolicy
+    | YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy
+):
     match opponent:
         case "minimal":
             return MinimalPolicy()
         case "combined":
             return GenbutsuDefenseFiniteHorizonValueAwarePolicy()
+        case "yakuhai-call":
+            return YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy()
         case _:
             raise ValueError(f"unknown opponent: {opponent}")
 

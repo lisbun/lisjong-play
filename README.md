@@ -13,10 +13,11 @@ python -m pip install -e ".[dev]"
 python -m lisjong_play
 python -m lisjong_play --opponent minimal
 python -m lisjong_play --opponent combined
-python -m lisjong_play --opponent combined --seed 12345
+python -m lisjong_play --opponent yakuhai-call
+python -m lisjong_play --opponent yakuhai-call --seed 12345
 ```
 
-The opponent defaults to `minimal`, preserving the original Human EAST vs `MinimalPolicy` x3 behavior. `combined` selects `GenbutsuDefenseFiniteHorizonValueAwarePolicy` for all three AI seats. Each AI seat receives an independent Policy instance and runs through the existing first-party bridge from `lisjong-arena`.
+The opponent defaults to `minimal`, preserving the original Human EAST vs `MinimalPolicy` x3 behavior. `combined` selects `GenbutsuDefenseFiniteHorizonValueAwarePolicy`, while `yakuhai-call` selects `YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy`, for all three AI seats. Each AI seat receives an independent Policy instance and runs through the existing first-party bridge from `lisjong-arena`.
 
 The default match seed is `0`. To replay another deterministic match with the default opponent:
 
