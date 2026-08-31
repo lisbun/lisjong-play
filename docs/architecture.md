@@ -38,7 +38,7 @@ same-process Human round history
 
 The opt-in session history narrows each `RoundEvidenceCompletion` to the Human EAST projection as soon as it is delivered, retains engine-provided round identity and evidence order, and becomes available only after a successful hanchan return. It is an in-memory read-oriented boundary, not a decision trace, AI analysis, persisted replay, or generic replay system.
 
-AI seats use real `lisjong.Policy` implementations. The CLI explicitly supports `minimal` and `combined`; all three AI seats use the selected type with an independent Policy instance per seat. The implementation reuses the existing first-party Policy bridge from `lisjong-arena`; bridge conversion / mapping semantics are not copied into this repository.
+AI seats use real `lisjong.Policy` implementations. The CLI explicitly supports `minimal`, `combined`, and `yakuhai-call`; all three AI seats use the selected type with an independent Policy instance per seat. The implementation reuses the existing first-party Policy bridge from `lisjong-arena`; bridge conversion / mapping semantics are not copied into this repository.
 
 ## Initial dependency direction
 
@@ -60,6 +60,7 @@ Human EAST
 +
 MinimalPolicy x 3 (default)
 or GenbutsuDefenseFiniteHorizonValueAwarePolicy x 3
+or YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy x 3
         |
         v
 lisjong-engine

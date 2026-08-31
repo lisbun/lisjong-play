@@ -4,6 +4,7 @@ from unittest.mock import patch
 from lisjong.policies import (
     GenbutsuDefenseFiniteHorizonValueAwarePolicy,
     MinimalPolicy,
+    YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy,
 )
 from lisjong_arena.lisjong_engine.policy_selector import PolicySeatSelector
 from lisjong_engine.seat import Seat
@@ -51,6 +52,12 @@ class SessionTest(unittest.TestCase):
             GenbutsuDefenseFiniteHorizonValueAwarePolicy,
         )
 
+    def test_yakuhai_call_opponent_with_independent_instances(self) -> None:
+        self.assert_ai_policy_type(
+            self.build_selectors("yakuhai-call"),
+            YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy,
+        )
+
     def test_cli_defaults_to_minimal_opponent(self) -> None:
         def input_reader(_: str) -> str:
             return ""
@@ -83,6 +90,26 @@ class SessionTest(unittest.TestCase):
         run_session.assert_called_once_with(
             seed=12345,
             opponent="combined",
+            input_reader=input_reader,
+            output_writer=output.append,
+        )
+
+    def test_cli_forwards_yakuhai_call_opponent(self) -> None:
+        def input_reader(_: str) -> str:
+            return ""
+
+        output: list[str] = []
+        with patch("lisjong_play.cli.run_cli_session") as run_session:
+            exit_code = main(
+                ["--opponent", "yakuhai-call"],
+                input_reader=input_reader,
+                output_writer=output.append,
+            )
+
+        self.assertEqual(0, exit_code)
+        run_session.assert_called_once_with(
+            seed=0,
+            opponent="yakuhai-call",
             input_reader=input_reader,
             output_writer=output.append,
         )
