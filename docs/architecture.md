@@ -4,11 +4,11 @@
 
 ## Responsibility
 
-`lisjong-play` owns human-facing presentation, input, action-selection UX, confirmation / interaction, CLI / future GUI presentation, human seat assignment, and the minimum session orchestration needed to play through `lisjong-engine`.
+`lisjong-play` owns human-facing presentation, input, action-selection UX, confirmation / interaction, CLI / GUI presentation, human seat assignment, and the minimum session orchestration needed to play through `lisjong-engine`.
 
 Game / round / turn state, legal actions, reaction priority, scoring / settlement, round / match progression, and terminal conditions remain owned by `lisjong-engine`.
 
-Human decisions use the engine public boundary directly:
+CLI and GUI Human decisions use the engine public boundary directly:
 
 ```text
 SeatObservation
@@ -16,11 +16,24 @@ SeatObservation
 tuple[ActionDescriptor, ...]
         |
         v
-Human selector
+Human UI selector
         |
         v
 selected ActionDescriptor
 ```
+
+The Tkinter prototype preserves the synchronous engine contract with one narrow thread bridge:
+
+```text
+Tk main thread                         engine worker
+---------------                        -------------
+render GuiBoardView  <--- request ---  SeatObservation + options
+button selection      --- reply ---->  original ActionDescriptor
+round result          <--- delivery -- RoundCompletionFact
+next-round button     --- confirm ---> callback returns
+```
+
+Only the main thread touches Tk widgets. The worker blocks at the existing Human selector and round-completion boundaries, and window close releases either wait. The GUI view model is derived only from `SeatObservation`; progress and results reuse the same player-safe delivery facts and pure renderers as the CLI. The bridge is a concrete Tk prototype boundary, not a generic asynchronous frontend protocol.
 
 Human choice does not pass through `PolicyInput`, `DecisionContext`, `InternalAction`, or `execute_policy()`.
 
@@ -53,7 +66,7 @@ lisjong-play
 
 The direct `lisjong-arena` dependency is an initial reuse decision, not a generic runtime architecture commitment. Re-evaluate extraction only when another concrete non-Arena consumer needs the same bridge, the dependency footprint becomes an actual maintenance/deployment problem, or the bridge needs an independent release lifecycle.
 
-## Initial vertical slice
+## Human Play vertical slices
 
 ```text
 Human EAST
@@ -69,4 +82,6 @@ lisjong-engine
 one hanchan completion
 ```
 
-The slice is CLI-only and intentionally excludes seat selection, per-seat or arbitrary Policy selection, rule selection, GUI/TUI/Web UI, persisted replay, save/resume, multiplayer, timeout recovery, and AI takeover. The dedicated same-process Human EAST history boundary above does not add replay persistence or reconstruction.
+The original CLI remains the stable minimum slice. A dedicated Tkinter Issue adds an optional desktop GUI prototype over the same Human EAST / selected Policy x3 composition. The prototype uses simple text tiles and a viewer-relative table; MJX's observation visualizer informed that presentation approach, but no MJX code, font, artwork, proto, or state model is included.
+
+Both slices intentionally exclude seat selection, per-seat or arbitrary Policy selection, rule selection, TUI/Web UI, persisted replay, save/resume, multiplayer, timeout recovery, and AI takeover. The dedicated same-process Human EAST history boundary above does not add replay persistence or reconstruction, and the live GUI does not require a canonical record schema.
