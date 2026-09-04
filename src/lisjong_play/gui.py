@@ -20,7 +20,7 @@ from lisjong_play.gui_bridge import (
     SessionFinished,
     run_gui_worker,
 )
-from lisjong_play.gui_model import GuiBoardView, GuiSeatView
+from lisjong_play.gui_model import GuiActionView, GuiBoardView, GuiSeatView
 from lisjong_play.renderer import RIVER_LEGEND
 from lisjong_play.session import (
     DEFAULT_OPPONENT,
@@ -32,6 +32,56 @@ from lisjong_play.session import (
 
 class GuiUnavailableError(RuntimeError):
     """Tkinterまたはdesktop displayを利用できない場合。"""
+
+
+_TILE_CONTROL_WIDTH = 4
+_ACTION_CONTROL_WIDTH = 16
+_ACTION_ROW_CAPACITY = 14
+_WIDE_ACTION_UNITS = 4
+
+
+def _only_pass_option_index(actions: Sequence[GuiActionView]) -> int | None:
+    """選択の余地がないpass requestだけをGUI操作なしで確定する。"""
+    if len(actions) == 1 and actions[0].style == "pass":
+        return actions[0].option_index
+    return None
+
+
+def _action_units(action: GuiActionView) -> int:
+    return 1 if action.style in {"discard", "tsumogiri"} else _WIDE_ACTION_UNITS
+
+
+def _partition_action_rows(
+    actions: Sequence[GuiActionView],
+) -> tuple[tuple[GuiActionView, ...], ...]:
+    """platform差があっても操作が横にはみ出さないbounded rowへ分割する。"""
+    rows: list[tuple[GuiActionView, ...]] = []
+    current: list[GuiActionView] = []
+    used_units = 0
+    for action in actions:
+        units = _action_units(action)
+        if current and used_units + units > _ACTION_ROW_CAPACITY:
+            rows.append(tuple(current))
+            current = []
+            used_units = 0
+        current.append(action)
+        used_units += units
+    if current:
+        rows.append(tuple(current))
+    return tuple(rows)
+
+
+def _action_button_attributes(action: GuiActionView) -> tuple[str, str, int]:
+    if action.style in {"discard", "tsumogiri"}:
+        assert action.tile_label is not None
+        suffix = "*" if action.style == "tsumogiri" else ""
+        style = "RedTile.TButton" if action.tile_label.endswith("r") else "Tile.TButton"
+        return f"{action.tile_label}{suffix}", style, _TILE_CONTROL_WIDTH
+    return (
+        action.label.replace(" / ", "\n"),
+        "Primary.TButton",
+        _ACTION_CONTROL_WIDTH,
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -115,12 +165,19 @@ class _TkGuiApplication:
         )
         style.configure("Seat.TLabelframe.Label", font=("TkDefaultFont", 11, "bold"))
         style.configure("Center.TLabel", font=("TkDefaultFont", 12, "bold"))
-        style.configure("Tile.TLabel", padding=(7, 9), relief="raised", anchor="center")
+        style.configure(
+            "Tile.TLabel",
+            padding=(7, 9),
+            relief="raised",
+            anchor="center",
+            font=("TkDefaultFont", 11, "bold"),
+        )
         style.configure(
             "RedTile.TLabel",
             padding=(7, 9),
             relief="raised",
             anchor="center",
+            font=("TkDefaultFont", 11, "bold"),
             foreground="#b42318",
         )
         style.configure(
@@ -252,6 +309,11 @@ class _TkGuiApplication:
 
     def _handle_event(self, event: GuiEvent) -> None:
         if isinstance(event, DecisionRequested):
+            automatic_index = _only_pass_option_index(event.actions)
+            if automatic_index is not None:
+                self._active_decision_id = event.request_id
+                self._choose_action(automatic_index)
+                return
             self._render_board(event.board)
             self._render_actions(event)
             self._status_var.set(f"あなたの操作: {event.board.decision_label}")
@@ -333,35 +395,29 @@ class _TkGuiApplication:
         return self._ttk.Label(
             parent,
             text=value,
+            width=_TILE_CONTROL_WIDTH,
+            anchor="center",
             style="RedTile.TLabel" if value.endswith("r") else "Tile.TLabel",
         )
 
     def _render_actions(self, event: DecisionRequested) -> None:
         self._active_decision_id = event.request_id
         self._clear_frame(self._actions)
-        row = self._ttk.Frame(self._actions)
-        row.pack(anchor="center")
-        for action in event.actions:
-            if action.style in {"discard", "tsumogiri"}:
-                assert action.tile_label is not None
-                label = action.tile_label
-                if action.style == "tsumogiri":
-                    label += "\nツモ切り"
-                style = (
-                    "RedTile.TButton"
-                    if action.tile_label.endswith("r")
-                    else "Tile.TButton"
+        for actions in _partition_action_rows(event.actions):
+            row = self._ttk.Frame(self._actions)
+            row.pack(anchor="center")
+            for action in actions:
+                label, style, width = _action_button_attributes(action)
+                button = self._ttk.Button(
+                    row,
+                    text=label,
+                    width=width,
+                    style=style,
+                    command=lambda index=action.option_index: self._choose_action(
+                        index
+                    ),
                 )
-            else:
-                label = action.label
-                style = "Primary.TButton"
-            button = self._ttk.Button(
-                row,
-                text=label,
-                style=style,
-                command=lambda index=action.option_index: self._choose_action(index),
-            )
-            button.pack(side="left", padx=3, pady=2)
+                button.pack(side="left", padx=3, pady=2)
 
     def _choose_action(self, option_index: int) -> None:
         bridge = self._bridge
