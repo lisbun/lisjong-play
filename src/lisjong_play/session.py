@@ -9,7 +9,12 @@ from lisjong.policies import (
     YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy,
 )
 from lisjong_arena.lisjong_engine.policy_selector import PolicySeatSelector
-from lisjong_engine.driver import ActionSelector, RoundEvidenceCallback, run_hanchan
+from lisjong_engine.driver import (
+    ActionSelector,
+    DeliveryCallback,
+    RoundEvidenceCallback,
+    run_hanchan,
+)
 from lisjong_engine.match_state import MatchState
 from lisjong_engine.seat import Seat
 
@@ -52,12 +57,49 @@ def build_seat_selectors(
 ) -> dict[Seat, ActionSelector]:
     """Human EASTと指定Policy 3席をengine selectorへcompositionする。"""
     human = HumanActionSelector(input_reader, output_writer)
+    return _build_seat_selectors(human, opponent=opponent)
+
+
+def _build_seat_selectors(
+    human_selector: ActionSelector,
+    *,
+    opponent: OpponentName,
+) -> dict[Seat, ActionSelector]:
+    """任意のHuman UI selectorと既存Policy 3席をcompositionする。"""
+    if not callable(human_selector):
+        raise TypeError("human_selector must be callable")
     return {
-        Seat.EAST: human,
+        Seat.EAST: human_selector,
         Seat.SOUTH: PolicySeatSelector(Seat.SOUTH, _create_opponent_policy(opponent)),
         Seat.WEST: PolicySeatSelector(Seat.WEST, _create_opponent_policy(opponent)),
         Seat.NORTH: PolicySeatSelector(Seat.NORTH, _create_opponent_policy(opponent)),
     }
+
+
+def _run_session(
+    *,
+    seed: int,
+    opponent: OpponentName,
+    human_selector: ActionSelector,
+    on_delivery: DeliveryCallback,
+    on_round_evidence_complete: RoundEvidenceCallback | None,
+) -> None:
+    """UI非依存のminimum Human EAST hanchan composition。"""
+    if type(seed) is not int:
+        raise TypeError("seed must be an int")
+    if not callable(on_delivery):
+        raise TypeError("on_delivery must be callable")
+    selectors = _build_seat_selectors(human_selector, opponent=opponent)
+    match_state = MatchState(seed=seed, rules=None)
+    if on_round_evidence_complete is None:
+        run_hanchan(match_state, selectors, on_delivery=on_delivery)
+        return
+    run_hanchan(
+        match_state,
+        selectors,
+        on_delivery=on_delivery,
+        on_round_evidence_complete=on_round_evidence_complete,
+    )
 
 
 def _run_cli_session(
@@ -68,22 +110,13 @@ def _run_cli_session(
     output_writer: Callable[[str], None],
     on_round_evidence_complete: RoundEvidenceCallback | None,
 ) -> None:
-    if type(seed) is not int:
-        raise TypeError("seed must be an int")
-    selectors = build_seat_selectors(
-        input_reader=input_reader,
-        output_writer=output_writer,
-        opponent=opponent,
-    )
+    human = HumanActionSelector(input_reader, output_writer)
     presenter = DeliveryPresenter(input_reader, output_writer)
-    match_state = MatchState(seed=seed, rules=None)
     output_writer(RIVER_LEGEND)
-    if on_round_evidence_complete is None:
-        run_hanchan(match_state, selectors, on_delivery=presenter)
-        return
-    run_hanchan(
-        match_state,
-        selectors,
+    _run_session(
+        seed=seed,
+        opponent=opponent,
+        human_selector=human,
         on_delivery=presenter,
         on_round_evidence_complete=on_round_evidence_complete,
     )

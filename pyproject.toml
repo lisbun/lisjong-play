@@ -21,6 +21,7 @@ dev = ["ruff==0.16.0"]
 
 [project.scripts]
 lisjong-play = "lisjong_play.cli:main"
+lisjong-play-gui = "lisjong_play.gui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

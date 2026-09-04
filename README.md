@@ -25,6 +25,22 @@ The default match seed is `0`. To replay another deterministic match with the de
 python -m lisjong_play --seed 12345
 ```
 
+## GUI prototype
+
+An optional Tkinter desktop prototype exposes the same Human EAST match without changing the CLI:
+
+```powershell
+python -m lisjong_play.gui
+python -m lisjong_play.gui --opponent combined --seed 12345
+lisjong-play-gui --opponent yakuhai-call --seed 12345
+```
+
+The launch screen lets you change the deterministic seed and select any opponent supported by the CLI. It presents Human EAST at the bottom of a viewer-relative four-player table, with public scores, rivers, melds, riichi state, dora indicators, round metadata, and the Human hand. Discards and other legal actions are selected with buttons. Round completion pauses at a **次局へ** button, while the terminal round proceeds to the final ranking.
+
+This is deliberately a functional prototype: it uses simple text tiles and does not yet include tile artwork, animation, sound, replay, save/resume, or seat/rule selection. Tkinter must be available in the Python 3.14 installation; the standard Windows installer normally includes it. The engine runs on a worker thread and all Tk operations remain on the GUI main thread, so closing the window also releases a pending Human decision or round confirmation.
+
+The table composition is informed by [MJX's observation visualizer](https://github.com/mjx-project/mjx/tree/master/mjx/visualizer), but no MJX code, font, or artwork is copied or bundled.
+
 Human decisions use the engine's player-safe `SeatObservation` and original legal `ActionDescriptor` values directly.
 
 For an ordinary turn where every legal action is a discard, the hand itself becomes the compact selection UI. Legal hand-discard choices are numbered under the corresponding tiles. When an explicit `DiscardActionDescriptor(is_tsumogiri=True)` is present, the drawn tile is separated to the right and `Enter` selects tsumogiri rather than exposing it as another numbered alias.
