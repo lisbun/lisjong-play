@@ -324,9 +324,11 @@ class _TkGuiApplication:
         if isinstance(event, RoundCompleted):
             self._append_log(event.text, separator=True)
             self._render_round_confirmation(event.confirmation_id)
+            self._messagebox.showinfo("局結果", event.text, parent=self._root)
             return
         if isinstance(event, MatchCompleted):
             self._append_log(event.text, separator=True)
+            self._messagebox.showinfo("半荘結果", event.text, parent=self._root)
             return
         if isinstance(event, SessionFinished):
             self._status_var.set("半荘が終了しました。")

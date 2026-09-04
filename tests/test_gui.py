@@ -13,7 +13,7 @@ from lisjong_play.gui import (
     _TkGuiApplication,
     main,
 )
-from lisjong_play.gui_bridge import DecisionRequested
+from lisjong_play.gui_bridge import DecisionRequested, MatchCompleted, RoundCompleted
 from lisjong_play.gui_model import ActionStyle, GuiActionView
 
 
@@ -121,6 +121,38 @@ class GuiActionLayoutTest(unittest.TestCase):
         application._choose_action.assert_called_once_with(7)
         application._render_board.assert_not_called()
         application._render_actions.assert_not_called()
+
+
+class GuiResultPresentationTest(unittest.TestCase):
+    def test_round_result_is_logged_and_shown_before_next_round(self) -> None:
+        application = _TkGuiApplication.__new__(_TkGuiApplication)
+        application._root = Mock()
+        application._messagebox = Mock()
+        application._append_log = Mock()  # type: ignore[method-assign]
+        application._render_round_confirmation = Mock()  # type: ignore[method-assign]
+
+        application._handle_event(RoundCompleted("東1局: 流局", 17))
+
+        application._append_log.assert_called_once_with("東1局: 流局", separator=True)
+        application._render_round_confirmation.assert_called_once_with(17)
+        application._messagebox.showinfo.assert_called_once_with(
+            "局結果", "東1局: 流局", parent=application._root
+        )
+
+    def test_match_result_is_logged_and_shown(self) -> None:
+        application = _TkGuiApplication.__new__(_TkGuiApplication)
+        application._root = Mock()
+        application._messagebox = Mock()
+        application._append_log = Mock()  # type: ignore[method-assign]
+
+        application._handle_event(MatchCompleted("最終順位: P1 1位"))
+
+        application._append_log.assert_called_once_with(
+            "最終順位: P1 1位", separator=True
+        )
+        application._messagebox.showinfo.assert_called_once_with(
+            "半荘結果", "最終順位: P1 1位", parent=application._root
+        )
 
 
 if __name__ == "__main__":
