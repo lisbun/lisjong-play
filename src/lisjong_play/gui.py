@@ -458,6 +458,10 @@ class _TkGuiApplication:
             self._ttk.Label(
                 box, text=f"from {meld.from_seat}", font=("TkDefaultFont", 8)
             ).pack()
+        if meld.called_tile is not None:
+            self._ttk.Label(
+                box, text=f"called {meld.called_tile}", font=("TkDefaultFont", 8)
+            ).pack()
 
     def _render_river_tile(self, parent: Any, cell: GuiRiverTile) -> Any:
         box = self._ttk.Frame(parent)

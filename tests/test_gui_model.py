@@ -96,7 +96,27 @@ class GuiBoardViewTest(unittest.TestCase):
         value = build_gui_board_view(with_meld)
 
         bottom = next(seat for seat in value.seats if seat.position == "bottom")
-        self.assertEqual((GuiMeldView("ポン", ("1m", "1m", "1m"), "P2"),), bottom.melds)
+        self.assertEqual(
+            (GuiMeldView("ポン", ("1m", "1m", "1m"), "P2", "1m"),), bottom.melds
+        )
+
+    def test_projects_concealed_meld_without_from_seat_or_called_tile(self) -> None:
+        base = observation()
+        one = tile(rank=1)
+        ankan = PublicMeld(PublicMeldType.ANKAN, (one, one, one, one), None, None)
+        with_meld = replace(
+            base,
+            melds=tuple(
+                SeatMelds(seat, (ankan,) if seat is Seat.EAST else ()) for seat in Seat
+            ),
+        )
+
+        value = build_gui_board_view(with_meld)
+
+        bottom = next(seat for seat in value.seats if seat.position == "bottom")
+        self.assertEqual(
+            (GuiMeldView("暗槓", ("1m", "1m", "1m", "1m"), None, None),), bottom.melds
+        )
 
     def test_reaction_does_not_invent_a_drawn_tile(self) -> None:
         value = build_gui_board_view(

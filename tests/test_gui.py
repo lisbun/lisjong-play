@@ -267,12 +267,46 @@ class GuiTileImageRegistrySharingTest(unittest.TestCase):
         application._ttk = Mock()
         application._tile_images = Mock()
 
-        application._render_meld(Mock(), GuiMeldView("ポン", ("1m", "1m", "1m"), "P2"))
+        application._render_meld(
+            Mock(), GuiMeldView("ポン", ("1m", "1m", "1m"), "P2", "1m")
+        )
 
         self.assertEqual(
             [("1m",), ("1m",), ("1m",)],
             [call.args for call in application._tile_images.get.call_args_list],
         )
+
+    def test_meld_caption_shows_the_called_tile_when_present(self) -> None:
+        application = _TkGuiApplication.__new__(_TkGuiApplication)
+        application._ttk = Mock()
+        application._tile_images = Mock()
+
+        application._render_meld(
+            Mock(), GuiMeldView("ポン", ("1m", "1m", "1m"), "P2", "1m")
+        )
+
+        label_texts = [
+            call.kwargs.get("text")
+            for call in application._ttk.Label.call_args_list
+            if "text" in call.kwargs
+        ]
+        self.assertIn("called 1m", label_texts)
+
+    def test_meld_caption_omits_the_called_tile_for_a_concealed_meld(self) -> None:
+        application = _TkGuiApplication.__new__(_TkGuiApplication)
+        application._ttk = Mock()
+        application._tile_images = Mock()
+
+        application._render_meld(
+            Mock(), GuiMeldView("暗槓", ("1m", "1m", "1m", "1m"), None, None)
+        )
+
+        label_texts = [
+            call.kwargs.get("text")
+            for call in application._ttk.Label.call_args_list
+            if "text" in call.kwargs
+        ]
+        self.assertFalse(any(text.startswith("called") for text in label_texts))
 
     def test_dora_indicators_look_up_their_images_from_the_shared_registry(
         self,

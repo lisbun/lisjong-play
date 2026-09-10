@@ -67,6 +67,7 @@ class GuiMeldView:
     type_label: str
     tiles: tuple[str, ...]
     from_seat: str | None
+    called_tile: str | None
 
 
 @dataclass(frozen=True)
@@ -122,6 +123,9 @@ def _meld_view(meld: PublicMeld) -> GuiMeldView:
             format_tile(tile) for tile in sorted(meld.tiles, key=tile_sort_key)
         ),
         from_seat=(format_seat(meld.from_seat) if meld.from_seat is not None else None),
+        called_tile=(
+            format_tile(meld.called_tile) if meld.called_tile is not None else None
+        ),
     )
 
 
