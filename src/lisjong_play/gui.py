@@ -20,7 +20,13 @@ from lisjong_play.gui_bridge import (
     SessionFinished,
     run_gui_worker,
 )
-from lisjong_play.gui_model import GuiActionView, GuiBoardView, GuiSeatView
+from lisjong_play.gui_model import (
+    GuiActionView,
+    GuiBoardView,
+    GuiMeldView,
+    GuiRiverTile,
+    GuiSeatView,
+)
 from lisjong_play.renderer import RIVER_LEGEND
 from lisjong_play.session import (
     DEFAULT_OPPONENT,
@@ -28,16 +34,18 @@ from lisjong_play.session import (
     OPPONENT_CHOICES,
     OpponentName,
 )
+from lisjong_play.tile_images import TileImageRegistry
 
 
 class GuiUnavailableError(RuntimeError):
     """Tkinterまたはdesktop displayを利用できない場合。"""
 
 
-_TILE_CONTROL_WIDTH = 4
 _ACTION_CONTROL_WIDTH = 16
 _ACTION_ROW_CAPACITY = 14
 _WIDE_ACTION_UNITS = 4
+_RIVER_ROW_SIZE = 6
+_TILE_IMAGE_SUBSAMPLE = 12
 _HAND_DISCARD_INSTRUCTION = "手牌から打牌を選択してください。"
 _HAND_STYLES = frozenset({"discard", "tsumogiri"})
 
@@ -105,24 +113,28 @@ def _partition_action_rows(
     return tuple(rows)
 
 
-def _tile_button_style(tile_label: str) -> str:
-    return "RedTile.TButton" if tile_label.endswith("r") else "Tile.TButton"
-
-
 def _action_button_attributes(action: GuiActionView) -> tuple[str, str, int]:
-    if action.style in _HAND_STYLES:
-        assert action.tile_label is not None
-        suffix = "*" if action.style == "tsumogiri" else ""
-        return (
-            f"{action.tile_label}{suffix}",
-            _tile_button_style(action.tile_label),
-            _TILE_CONTROL_WIDTH,
-        )
+    """手牌以外のwide action button向けの表示属性。"""
     return (
         action.label.replace(" / ", "\n"),
         "Primary.TButton",
         _ACTION_CONTROL_WIDTH,
     )
+
+
+def _load_tile_image(tk: Any, path: str) -> Any:
+    """vendored牌画像を原寸からGUI表示向けの縮小sizeへ変換する。"""
+    return tk.PhotoImage(file=path).subsample(_TILE_IMAGE_SUBSAMPLE)
+
+
+def _river_caption(cell: GuiRiverTile) -> str:
+    """河牌画像へ添える、tsumogiri / 立直宣言 / 鳴かれた牌のtext marker。"""
+    caption = "*" if cell.is_tsumogiri else ""
+    if cell.is_riichi_declaration:
+        caption = f"[{caption}]"
+    if cell.called_by is not None:
+        caption += f"→{cell.called_by}"
+    return caption
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -186,6 +198,7 @@ class _TkGuiApplication:
         self._bridge: GuiSessionBridge | None = None
         self._worker: threading.Thread | None = None
         self._active_decision_id: int | None = None
+        self._tile_images = TileImageRegistry(lambda path: _load_tile_image(tk, path))
 
         root.title("lisjong-play GUI prototype")
         root.geometry("1180x860")
@@ -206,30 +219,8 @@ class _TkGuiApplication:
         )
         style.configure("Seat.TLabelframe.Label", font=("TkDefaultFont", 11, "bold"))
         style.configure("Center.TLabel", font=("TkDefaultFont", 12, "bold"))
-        style.configure(
-            "Tile.TLabel",
-            padding=(7, 9),
-            relief="raised",
-            anchor="center",
-            font=("TkDefaultFont", 11, "bold"),
-        )
-        style.configure(
-            "RedTile.TLabel",
-            padding=(7, 9),
-            relief="raised",
-            anchor="center",
-            font=("TkDefaultFont", 11, "bold"),
-            foreground="#b42318",
-        )
-        style.configure(
-            "Tile.TButton", padding=(7, 9), font=("TkDefaultFont", 11, "bold")
-        )
-        style.configure(
-            "RedTile.TButton",
-            padding=(7, 9),
-            font=("TkDefaultFont", 11, "bold"),
-            foreground="#b42318",
-        )
+        style.configure("TileImage.TLabel", padding=1, relief="flat")
+        style.configure("TileImage.TButton", padding=1)
         style.configure("Primary.TButton", padding=(12, 8))
 
     def _build_layout(self, *, seed: int, opponent: OpponentName) -> None:
@@ -395,10 +386,14 @@ class _TkGuiApplication:
             self._center, text=board.round_label, style="Center.TLabel"
         ).pack(pady=(8, 4))
         self._ttk.Label(self._center, text=board.center_detail).pack(pady=4)
-        dora = "  ".join(board.dora_indicators) or "なし"
-        self._ttk.Label(
-            self._center, text=f"ドラ表示牌\n{dora}", justify="center"
-        ).pack(pady=4)
+        self._ttk.Label(self._center, text="ドラ表示牌").pack(pady=(4, 0))
+        dora_row = self._ttk.Frame(self._center)
+        dora_row.pack(pady=(0, 4))
+        if board.dora_indicators:
+            for tile_label in board.dora_indicators:
+                self._tile_image_label(dora_row, tile_label).pack(side="left", padx=1)
+        else:
+            self._ttk.Label(dora_row, text="なし").pack()
         self._ttk.Label(
             self._center,
             text=f"判断\n{board.decision_label}",
@@ -429,40 +424,68 @@ class _TkGuiApplication:
         if seat.riichi:
             status += f"  /  {seat.riichi}"
         self._ttk.Label(frame, text=status).pack(anchor="w")
-        melds = " | ".join(seat.melds) or "なし"
-        self._ttk.Label(frame, text=f"副露: {melds}", wraplength=260).pack(
-            anchor="w", pady=(4, 2)
-        )
-        river_rows = [
-            "  ".join(seat.river[index : index + 6])
-            for index in range(0, len(seat.river), 6)
-        ]
-        river = "\n".join(river_rows) or "-"
-        self._ttk.Label(frame, text=f"河:\n{river}", justify="left").pack(
-            anchor="w", pady=(2, 0)
-        )
 
-    def _tile_label(self, parent: Any, value: str) -> Any:
+        self._ttk.Label(frame, text="副露:").pack(anchor="w", pady=(4, 0))
+        melds_row = self._ttk.Frame(frame)
+        melds_row.pack(anchor="w", pady=(0, 4))
+        if not seat.melds:
+            self._ttk.Label(melds_row, text="なし").pack(side="left")
+        else:
+            for meld in seat.melds:
+                self._render_meld(melds_row, meld)
+
+        self._ttk.Label(frame, text="河:").pack(anchor="w")
+        river_box = self._ttk.Frame(frame)
+        river_box.pack(anchor="w")
+        if not seat.river:
+            self._ttk.Label(river_box, text="-").pack(anchor="w")
+        else:
+            for start in range(0, len(seat.river), _RIVER_ROW_SIZE):
+                row = self._ttk.Frame(river_box)
+                row.pack(anchor="w")
+                for cell in seat.river[start : start + _RIVER_ROW_SIZE]:
+                    self._render_river_tile(row, cell).pack(side="left", padx=1)
+
+    def _render_meld(self, parent: Any, meld: GuiMeldView) -> None:
+        box = self._ttk.Frame(parent, padding=(0, 0, 6, 0))
+        box.pack(side="left")
+        self._ttk.Label(box, text=meld.type_label, font=("TkDefaultFont", 8)).pack()
+        tiles_row = self._ttk.Frame(box)
+        tiles_row.pack()
+        for tile_label in meld.tiles:
+            self._tile_image_label(tiles_row, tile_label).pack(side="left")
+        if meld.from_seat is not None:
+            self._ttk.Label(
+                box, text=f"from {meld.from_seat}", font=("TkDefaultFont", 8)
+            ).pack()
+
+    def _render_river_tile(self, parent: Any, cell: GuiRiverTile) -> Any:
+        box = self._ttk.Frame(parent)
+        self._tile_image_label(box, cell.tile).pack()
+        caption = _river_caption(cell)
+        if caption:
+            self._ttk.Label(box, text=caption, font=("TkDefaultFont", 8)).pack()
+        return box
+
+    def _tile_image(self, tile_label: str) -> Any:
+        return self._tile_images.get(tile_label)
+
+    def _tile_image_label(self, parent: Any, tile_label: str) -> Any:
         return self._ttk.Label(
-            parent,
-            text=value,
-            width=_TILE_CONTROL_WIDTH,
-            anchor="center",
-            style="RedTile.TLabel" if value.endswith("r") else "Tile.TLabel",
+            parent, image=self._tile_image(tile_label), style="TileImage.TLabel"
         )
 
     def _tile_control(
         self, parent: Any, value: str, action: GuiActionView | None
     ) -> Any:
-        """legal打牌に対応する表示牌はbuttonへ、それ以外はlabelのままにする。"""
+        """legal打牌に対応する表示牌画像はbuttonへ、それ以外はlabelのままにする。"""
+        photo = self._tile_image(value)
         if action is None:
-            return self._tile_label(parent, value)
-        label, style, width = _action_button_attributes(action)
+            return self._ttk.Label(parent, image=photo, style="TileImage.TLabel")
         return self._ttk.Button(
             parent,
-            text=label,
-            width=width,
-            style=style,
+            image=photo,
+            style="TileImage.TButton",
             command=lambda index=action.option_index: self._choose_action(index),
         )
 
