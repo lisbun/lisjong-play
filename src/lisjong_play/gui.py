@@ -38,6 +38,8 @@ _TILE_CONTROL_WIDTH = 4
 _ACTION_CONTROL_WIDTH = 16
 _ACTION_ROW_CAPACITY = 14
 _WIDE_ACTION_UNITS = 4
+_HAND_DISCARD_INSTRUCTION = "手牌から打牌を選択してください。"
+_HAND_STYLES = frozenset({"discard", "tsumogiri"})
 
 
 def _only_pass_option_index(actions: Sequence[GuiActionView]) -> int | None:
@@ -47,8 +49,40 @@ def _only_pass_option_index(actions: Sequence[GuiActionView]) -> int | None:
     return None
 
 
+def _hand_discard_actions(
+    actions: Sequence[GuiActionView],
+) -> dict[str, GuiActionView]:
+    """表示中の concealed-hand tile label → 対応する打牌 GuiActionView。
+
+    同一tile_labelの打牌optionはengine projectionで常に1件へcollapseされる
+    ため、同じ表示牌が複数あってもsame option_indexへ安全に対応付く。
+    """
+    return {
+        action.tile_label: action
+        for action in actions
+        if action.style == "discard" and action.tile_label is not None
+    }
+
+
+def _drawn_tile_tsumogiri_action(
+    actions: Sequence[GuiActionView], drawn_tile: str | None
+) -> GuiActionView | None:
+    """表示中の drawn tileへ一致するツモ切り GuiActionViewだけを返す。"""
+    if drawn_tile is None:
+        return None
+    for action in actions:
+        if action.style == "tsumogiri" and action.tile_label == drawn_tile:
+            return action
+    return None
+
+
+def _non_hand_actions(actions: Sequence[GuiActionView]) -> tuple[GuiActionView, ...]:
+    """手牌へ移した打牌 / ツモ切りを除いた、操作panelへ残す選択肢。"""
+    return tuple(action for action in actions if action.style not in _HAND_STYLES)
+
+
 def _action_units(action: GuiActionView) -> int:
-    return 1 if action.style in {"discard", "tsumogiri"} else _WIDE_ACTION_UNITS
+    return 1 if action.style in _HAND_STYLES else _WIDE_ACTION_UNITS
 
 
 def _partition_action_rows(
@@ -71,12 +105,19 @@ def _partition_action_rows(
     return tuple(rows)
 
 
+def _tile_button_style(tile_label: str) -> str:
+    return "RedTile.TButton" if tile_label.endswith("r") else "Tile.TButton"
+
+
 def _action_button_attributes(action: GuiActionView) -> tuple[str, str, int]:
-    if action.style in {"discard", "tsumogiri"}:
+    if action.style in _HAND_STYLES:
         assert action.tile_label is not None
         suffix = "*" if action.style == "tsumogiri" else ""
-        style = "RedTile.TButton" if action.tile_label.endswith("r") else "Tile.TButton"
-        return f"{action.tile_label}{suffix}", style, _TILE_CONTROL_WIDTH
+        return (
+            f"{action.tile_label}{suffix}",
+            _tile_button_style(action.tile_label),
+            _TILE_CONTROL_WIDTH,
+        )
     return (
         action.label.replace(" / ", "\n"),
         "Primary.TButton",
@@ -314,7 +355,7 @@ class _TkGuiApplication:
                 self._active_decision_id = event.request_id
                 self._choose_action(automatic_index)
                 return
-            self._render_board(event.board)
+            self._render_board(event.board, event.actions)
             self._render_actions(event)
             self._status_var.set(f"あなたの操作: {event.board.decision_label}")
             return
@@ -342,7 +383,9 @@ class _TkGuiApplication:
             return
         raise AssertionError(f"unknown GUI event: {type(event).__name__}")
 
-    def _render_board(self, board: GuiBoardView) -> None:
+    def _render_board(
+        self, board: GuiBoardView, actions: Sequence[GuiActionView]
+    ) -> None:
         by_position = {seat.position: seat for seat in board.seats}
         for position, frame in self._seat_frames.items():
             self._render_seat(frame, by_position[position])
@@ -365,13 +408,19 @@ class _TkGuiApplication:
         self._clear_frame(self._hand)
         tiles = self._ttk.Frame(self._hand)
         tiles.pack(anchor="center")
+        discard_actions = _hand_discard_actions(actions)
         for value in board.hand_tiles:
-            self._tile_label(tiles, value).pack(side="left", padx=2)
+            self._tile_control(tiles, value, discard_actions.get(value)).pack(
+                side="left", padx=2
+            )
         if board.drawn_tile is not None:
             self._ttk.Separator(tiles, orient="vertical").pack(
                 side="left", fill="y", padx=8
             )
-            self._tile_label(tiles, board.drawn_tile).pack(side="left", padx=2)
+            tsumogiri_action = _drawn_tile_tsumogiri_action(actions, board.drawn_tile)
+            self._tile_control(tiles, board.drawn_tile, tsumogiri_action).pack(
+                side="left", padx=2
+            )
 
     def _render_seat(self, frame: Any, seat: GuiSeatView) -> None:
         self._clear_frame(frame)
@@ -402,10 +451,29 @@ class _TkGuiApplication:
             style="RedTile.TLabel" if value.endswith("r") else "Tile.TLabel",
         )
 
+    def _tile_control(
+        self, parent: Any, value: str, action: GuiActionView | None
+    ) -> Any:
+        """legal打牌に対応する表示牌はbuttonへ、それ以外はlabelのままにする。"""
+        if action is None:
+            return self._tile_label(parent, value)
+        label, style, width = _action_button_attributes(action)
+        return self._ttk.Button(
+            parent,
+            text=label,
+            width=width,
+            style=style,
+            command=lambda index=action.option_index: self._choose_action(index),
+        )
+
     def _render_actions(self, event: DecisionRequested) -> None:
         self._active_decision_id = event.request_id
         self._clear_frame(self._actions)
-        for actions in _partition_action_rows(event.actions):
+        non_hand_actions = _non_hand_actions(event.actions)
+        if not non_hand_actions:
+            self._ttk.Label(self._actions, text=_HAND_DISCARD_INSTRUCTION).pack()
+            return
+        for actions in _partition_action_rows(non_hand_actions):
             row = self._ttk.Frame(self._actions)
             row.pack(anchor="center")
             for action in actions:
