@@ -4,10 +4,14 @@ from unittest.mock import Mock, patch
 from lisjong_play.gui import (
     _ACTION_CONTROL_WIDTH,
     _ACTION_ROW_CAPACITY,
+    _HAND_DISCARD_INSTRUCTION,
     _TILE_CONTROL_WIDTH,
     GuiUnavailableError,
     _action_button_attributes,
     _action_units,
+    _drawn_tile_tsumogiri_action,
+    _hand_discard_actions,
+    _non_hand_actions,
     _only_pass_option_index,
     _partition_action_rows,
     _TkGuiApplication,
@@ -121,6 +125,113 @@ class GuiActionLayoutTest(unittest.TestCase):
         application._choose_action.assert_called_once_with(7)
         application._render_board.assert_not_called()
         application._render_actions.assert_not_called()
+
+
+class GuiHandTileSelectionTest(unittest.TestCase):
+    def test_concealed_discard_resolves_to_its_original_option_index(self) -> None:
+        discard = action_view(2, style="discard", tile_label="5m")
+        other = action_view(5, style="action", tile_label=None)
+
+        resolved = _hand_discard_actions((discard, other))
+
+        self.assertEqual({"5m": discard}, resolved)
+
+    def test_duplicate_hand_tile_labels_resolve_to_the_same_discard_option(
+        self,
+    ) -> None:
+        discard = action_view(2, style="discard", tile_label="5m")
+        resolved = _hand_discard_actions((discard,))
+
+        self.assertIs(resolved["5m"], resolved.get("5m"))
+        self.assertEqual(2, resolved["5m"].option_index)
+        self.assertNotIn("6m", resolved)
+
+    def test_drawn_tile_resolves_only_the_matching_tsumogiri_action(self) -> None:
+        tsumogiri = action_view(4, style="tsumogiri", tile_label="7p")
+        concealed_discard_same_label = action_view(1, style="discard", tile_label="7p")
+        actions = (concealed_discard_same_label, tsumogiri)
+
+        self.assertIs(tsumogiri, _drawn_tile_tsumogiri_action(actions, "7p"))
+        self.assertIsNone(
+            _drawn_tile_tsumogiri_action((concealed_discard_same_label,), "7p")
+        )
+        self.assertIsNone(_drawn_tile_tsumogiri_action(actions, "8p"))
+        self.assertIsNone(_drawn_tile_tsumogiri_action(actions, None))
+
+    def test_non_hand_actions_filters_out_discard_and_tsumogiri(self) -> None:
+        discard = action_view(0, style="discard")
+        tsumogiri = action_view(1, style="tsumogiri", tile_label="9s")
+        pass_action = action_view(2, style="pass", tile_label=None)
+        wide_action = action_view(3, style="action", tile_label=None)
+
+        self.assertEqual(
+            (pass_action, wide_action),
+            _non_hand_actions((discard, tsumogiri, pass_action, wide_action)),
+        )
+
+    def test_render_actions_shows_instruction_when_only_hand_actions_remain(
+        self,
+    ) -> None:
+        application = _TkGuiApplication.__new__(_TkGuiApplication)
+        application._ttk = Mock()
+        application._actions = Mock()
+        application._clear_frame = Mock()  # type: ignore[method-assign]
+        event = DecisionRequested(
+            request_id=3,
+            board=Mock(),
+            actions=(
+                action_view(0, style="discard"),
+                action_view(1, style="tsumogiri", tile_label="1p"),
+            ),
+        )
+
+        application._render_actions(event)
+
+        self.assertEqual(3, application._active_decision_id)
+        application._ttk.Label.assert_called_once_with(
+            application._actions, text=_HAND_DISCARD_INSTRUCTION
+        )
+
+    def test_tile_control_builds_a_button_for_a_legal_discard(self) -> None:
+        application = _TkGuiApplication.__new__(_TkGuiApplication)
+        application._ttk = Mock()
+        application._choose_action = Mock()  # type: ignore[method-assign]
+        parent = Mock()
+        action = action_view(6, style="discard", tile_label="5pr")
+
+        control = application._tile_control(parent, "5pr", action)
+
+        self.assertIs(control, application._ttk.Button.return_value)
+        _, kwargs = application._ttk.Button.call_args
+        self.assertEqual("5pr", kwargs["text"])
+        self.assertEqual("RedTile.TButton", kwargs["style"])
+        kwargs["command"]()
+        application._choose_action.assert_called_once_with(6)
+
+    def test_tile_control_builds_a_tsumogiri_button_with_the_marker(self) -> None:
+        application = _TkGuiApplication.__new__(_TkGuiApplication)
+        application._ttk = Mock()
+        application._choose_action = Mock()  # type: ignore[method-assign]
+        parent = Mock()
+        action = action_view(9, style="tsumogiri", tile_label="1p")
+
+        control = application._tile_control(parent, "1p", action)
+
+        self.assertIs(control, application._ttk.Button.return_value)
+        _, kwargs = application._ttk.Button.call_args
+        self.assertEqual("1p*", kwargs["text"])
+        kwargs["command"]()
+        application._choose_action.assert_called_once_with(9)
+
+    def test_tile_control_stays_a_label_for_a_non_legal_tile(self) -> None:
+        application = _TkGuiApplication.__new__(_TkGuiApplication)
+        application._ttk = Mock()
+        parent = Mock()
+
+        control = application._tile_control(parent, "3s", None)
+
+        self.assertIs(control, application._ttk.Label.return_value)
+        application._ttk.Button.assert_not_called()
 
 
 class GuiResultPresentationTest(unittest.TestCase):
