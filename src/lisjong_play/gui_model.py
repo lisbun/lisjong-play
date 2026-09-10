@@ -10,13 +10,13 @@ from lisjong_engine.action_descriptor import (
     is_action_descriptor,
 )
 from lisjong_engine.observation import ObservationDecisionKind, SeatObservation
-from lisjong_engine.public_state import PublicDiscard, PublicRiichiStatus
+from lisjong_engine.public_state import PublicDiscard, PublicMeld, PublicRiichiStatus
 from lisjong_engine.seat import Seat
 
 from lisjong_play.formatting import (
     UnsupportedActionDescriptorError,
     format_action_descriptor,
-    format_meld,
+    format_meld_type,
     format_seat,
     format_tile,
     format_wind,
@@ -47,6 +47,30 @@ class GuiProjectionError(ValueError):
 
 
 @dataclass(frozen=True)
+class GuiRiverTile:
+    """河上の1枚分のpublic discard表示。
+
+    tile画像とtsumogiri / riichi宣言 / 鳴かれた牌のmarkerをGUI側で文字列から
+    逆parseしなくて済むよう、構造化したまま保持する。
+    """
+
+    tile: str
+    is_tsumogiri: bool
+    is_riichi_declaration: bool
+    called_by: str | None
+
+
+@dataclass(frozen=True)
+class GuiMeldView:
+    """1件のpublic meld表示。"""
+
+    type_label: str
+    tiles: tuple[str, ...]
+    from_seat: str | None
+    called_tile: str | None
+
+
+@dataclass(frozen=True)
 class GuiSeatView:
     """卓上の1席分のpublic表示。"""
 
@@ -54,8 +78,8 @@ class GuiSeatView:
     label: str
     score: int
     riichi: str
-    melds: tuple[str, ...]
-    river: tuple[str, ...]
+    melds: tuple[GuiMeldView, ...]
+    river: tuple[GuiRiverTile, ...]
 
 
 @dataclass(frozen=True)
@@ -81,15 +105,28 @@ class GuiActionView:
     tile_label: str | None
 
 
-def _format_discard(discard: PublicDiscard) -> str:
-    tile = format_tile(discard.tile)
-    if discard.is_tsumogiri:
-        tile += "*"
-    if discard.is_riichi_declaration:
-        tile = f"[{tile}]"
-    if discard.called_by is not None:
-        tile += f"→{format_seat(discard.called_by)}"
-    return tile
+def _river_tile(discard: PublicDiscard) -> GuiRiverTile:
+    return GuiRiverTile(
+        tile=format_tile(discard.tile),
+        is_tsumogiri=discard.is_tsumogiri,
+        is_riichi_declaration=discard.is_riichi_declaration,
+        called_by=(
+            format_seat(discard.called_by) if discard.called_by is not None else None
+        ),
+    )
+
+
+def _meld_view(meld: PublicMeld) -> GuiMeldView:
+    return GuiMeldView(
+        type_label=format_meld_type(meld.meld_type),
+        tiles=tuple(
+            format_tile(tile) for tile in sorted(meld.tiles, key=tile_sort_key)
+        ),
+        from_seat=(format_seat(meld.from_seat) if meld.from_seat is not None else None),
+        called_tile=(
+            format_tile(meld.called_tile) if meld.called_tile is not None else None
+        ),
+    )
 
 
 def _position(seat: Seat, viewer_seat: Seat) -> TablePosition:
@@ -132,9 +169,9 @@ def build_gui_board_view(observation: SeatObservation) -> GuiBoardView:
                 label=round_seat_label(seat, observation.dealer_seat),
                 score=scores[seat],
                 riichi=riichi_label,
-                melds=tuple(format_meld(value) for value in melds[seat]),
+                melds=tuple(_meld_view(value) for value in melds[seat]),
                 river=tuple(
-                    _format_discard(value)
+                    _river_tile(value)
                     for value in sorted(discards[seat], key=lambda item: item.order)
                 ),
             )

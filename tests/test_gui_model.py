@@ -18,7 +18,12 @@ from lisjong_engine.public_state import (
 from lisjong_engine.seat import Seat
 from lisjong_engine.tile import TileCategory
 
-from lisjong_play.gui_model import build_gui_action_views, build_gui_board_view
+from lisjong_play.gui_model import (
+    GuiMeldView,
+    GuiRiverTile,
+    build_gui_action_views,
+    build_gui_board_view,
+)
 from tests._fixtures import observation, tile
 
 
@@ -61,9 +66,11 @@ class GuiBoardViewTest(unittest.TestCase):
         self.assertEqual("P1（西家）", seats["left"].label)
         self.assertEqual(25_000, seats["bottom"].score)
         self.assertEqual("立直", seats["bottom"].riichi)
-        self.assertEqual(("1m→P4",), seats["left"].river)
-        self.assertEqual(("2m*",), seats["bottom"].river)
-        self.assertEqual(("[3m]",), seats["right"].river)
+        self.assertEqual((GuiRiverTile("1m", False, False, "P4"),), seats["left"].river)
+        self.assertEqual(
+            (GuiRiverTile("2m", True, False, None),), seats["bottom"].river
+        )
+        self.assertEqual((GuiRiverTile("3m", False, True, None),), seats["right"].river)
         self.assertEqual("東1局 0本場", value.round_label)
         self.assertEqual("自摸番", value.decision_label)
         self.assertEqual(("3p",), value.dora_indicators)
@@ -89,7 +96,27 @@ class GuiBoardViewTest(unittest.TestCase):
         value = build_gui_board_view(with_meld)
 
         bottom = next(seat for seat in value.seats if seat.position == "bottom")
-        self.assertEqual(("ポン / 1m 1m 1m / from P2 / called 1m",), bottom.melds)
+        self.assertEqual(
+            (GuiMeldView("ポン", ("1m", "1m", "1m"), "P2", "1m"),), bottom.melds
+        )
+
+    def test_projects_concealed_meld_without_from_seat_or_called_tile(self) -> None:
+        base = observation()
+        one = tile(rank=1)
+        ankan = PublicMeld(PublicMeldType.ANKAN, (one, one, one, one), None, None)
+        with_meld = replace(
+            base,
+            melds=tuple(
+                SeatMelds(seat, (ankan,) if seat is Seat.EAST else ()) for seat in Seat
+            ),
+        )
+
+        value = build_gui_board_view(with_meld)
+
+        bottom = next(seat for seat in value.seats if seat.position == "bottom")
+        self.assertEqual(
+            (GuiMeldView("暗槓", ("1m", "1m", "1m", "1m"), None, None),), bottom.melds
+        )
 
     def test_reaction_does_not_invent_a_drawn_tile(self) -> None:
         value = build_gui_board_view(

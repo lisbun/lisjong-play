@@ -77,10 +77,16 @@ def format_tiles(tiles: tuple[PublicTile, ...]) -> str:
     return " ".join(format_tile(tile) for tile in sorted(tiles, key=tile_sort_key))
 
 
+def format_meld_type(meld_type: PublicMeldType) -> str:
+    if not isinstance(meld_type, PublicMeldType):
+        raise TypeError("meld_type must be a PublicMeldType")
+    return _MELD_LABELS[meld_type]
+
+
 def format_meld(meld: PublicMeld) -> str:
     if not isinstance(meld, PublicMeld):
         raise TypeError("meld must be a PublicMeld")
-    parts = [_MELD_LABELS[meld.meld_type], format_tiles(meld.tiles)]
+    parts = [format_meld_type(meld.meld_type), format_tiles(meld.tiles)]
     if meld.from_seat is not None:
         parts.append(f"from {format_seat(meld.from_seat)}")
     if meld.called_tile is not None:
