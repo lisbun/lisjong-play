@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import Mock, call, patch
+from unittest.mock import Mock, patch
 
 from lisjong_play.gui import (
     _ACTION_CONTROL_WIDTH,
@@ -16,14 +16,13 @@ from lisjong_play.gui import (
     main,
 )
 from lisjong_play.gui_board import (
+    CENTER_PLACE,
+    TABLE_PLACE,
     drawn_tile_tsumogiri_action,
     hand_discard_actions,
 )
 from lisjong_play.gui_bridge import DecisionRequested, MatchCompleted, RoundCompleted
-from lisjong_play.gui_model import (
-    ActionStyle,
-    GuiActionView,
-)
+from lisjong_play.gui_model import ActionStyle, GuiActionView
 
 
 def action_view(
@@ -123,7 +122,7 @@ class GuiActionLayoutTest(unittest.TestCase):
 
 
 class GuiTableLayoutTest(unittest.TestCase):
-    def test_table_rows_share_bounded_height_equally(self) -> None:
+    def test_seat_cards_float_at_table_edges_instead_of_stretching_grid_cells(self) -> None:
         application = _TkGuiApplication.__new__(_TkGuiApplication)
         application._root = Mock()
         application._tk = Mock()
@@ -153,14 +152,12 @@ class GuiTableLayoutTest(unittest.TestCase):
 
         application._build_layout(seed=0, opponent="minimal")
 
-        self.assertEqual(
-            [
-                call(0, weight=1, uniform="table-row"),
-                call(1, weight=1, uniform="table-row"),
-                call(2, weight=1, uniform="table-row"),
-            ],
-            table.rowconfigure.call_args_list,
-        )
+        for frame, position in zip(seat_frames, TABLE_PLACE, strict=True):
+            relx, rely, anchor = TABLE_PLACE[position]
+            frame.place.assert_called_once_with(relx=relx, rely=rely, anchor=anchor)
+        relx, rely, anchor = CENTER_PLACE
+        center.place.assert_called_once_with(relx=relx, rely=rely, anchor=anchor)
+        table.rowconfigure.assert_not_called()
 
 
 class GuiHandTileSelectionTest(unittest.TestCase):
