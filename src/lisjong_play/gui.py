@@ -45,6 +45,7 @@ class GuiUnavailableError(RuntimeError):
 _ACTION_CONTROL_WIDTH = 16
 _ACTION_ROW_CAPACITY = 14
 _WIDE_ACTION_UNITS = 4
+_LOG_VISIBLE_LINES = 3
 _HAND_DISCARD_INSTRUCTION = "手牌から打牌を選択してください。"
 _HAND_STYLES = frozenset({"discard", "tsumogiri"})
 
@@ -185,11 +186,16 @@ class _TkGuiApplication:
         style.configure("Primary.TButton", padding=(12, 8))
 
     def _build_layout(self, *, seed: int, opponent: OpponentName) -> None:
-        main = self._ttk.Frame(self._root, padding=12)
+        # The board is the only vertically elastic surface.  Human hand/actions and the
+        # compact progress log keep their requested height, so a long river can no longer
+        # push the controls below the window.
+        main = self._ttk.Frame(self._root, padding=8)
         main.pack(fill="both", expand=True)
+        main.columnconfigure(0, weight=1)
+        main.rowconfigure(1, weight=1)
 
         setup = self._ttk.Frame(main)
-        setup.pack(fill="x", pady=(0, 8))
+        setup.grid(row=0, column=0, sticky="ew", pady=(0, 4))
         self._ttk.Label(setup, text="Seed").pack(side="left")
         self._seed_var = self._tk.StringVar(value=str(seed))
         self._seed_entry = self._ttk.Entry(setup, textvariable=self._seed_var, width=12)
@@ -218,11 +224,15 @@ class _TkGuiApplication:
             side="right", padx=(12, 0)
         )
 
-        self._table = self._ttk.Frame(main, style="Table.TFrame", padding=12)
-        self._table.pack(fill="both", expand=True)
+        self._table = self._ttk.Frame(main, style="Table.TFrame", padding=6)
+        self._table.grid(row=1, column=0, sticky="nsew", pady=(0, 2))
         for index in range(3):
             self._table.columnconfigure(index, weight=1)
-            self._table.rowconfigure(index, weight=1)
+        # Top/bottom seats keep their natural compact height.  Only the middle row
+        # absorbs spare/short vertical space.
+        self._table.rowconfigure(0, weight=0)
+        self._table.rowconfigure(1, weight=1)
+        self._table.rowconfigure(2, weight=0)
 
         self._seat_frames: dict[str, Any] = {}
         for position, (row, column) in POSITION_GRID.items():
@@ -230,12 +240,12 @@ class _TkGuiApplication:
                 self._table,
                 text=position,
                 style="Seat.TLabelframe",
-                padding=8,
+                padding=4,
             )
-            frame.grid(row=row, column=column, padx=8, pady=8, sticky="nsew")
+            frame.grid(row=row, column=column, padx=4, pady=4, sticky="nsew")
             self._seat_frames[position] = frame
-        self._center = self._ttk.Frame(self._table, padding=12)
-        self._center.grid(row=1, column=1, padx=8, pady=8, sticky="nsew")
+        self._center = self._ttk.Frame(self._table, padding=6)
+        self._center.grid(row=1, column=1, padx=4, pady=4, sticky="nsew")
         self._ttk.Label(
             self._center,
             text="卓情報はHuman decision時に更新されます",
@@ -244,25 +254,28 @@ class _TkGuiApplication:
             justify="center",
         ).pack(fill="both", expand=True)
 
-        self._ttk.Label(main, text=RIVER_LEGEND).pack(fill="x", pady=(4, 0))
+        self._ttk.Label(main, text=RIVER_LEGEND).grid(
+            row=2, column=0, sticky="ew", pady=(2, 0)
+        )
 
-        self._hand = self._ttk.LabelFrame(main, text="あなたの手牌", padding=8)
-        self._hand.pack(fill="x", pady=(8, 4))
+        self._hand = self._ttk.LabelFrame(main, text="あなたの手牌", padding=4)
+        self._hand.grid(row=3, column=0, sticky="ew", pady=(4, 2))
         self._ttk.Label(self._hand, text="対局開始後に表示されます").pack()
 
-        self._actions = self._ttk.LabelFrame(main, text="操作", padding=8)
-        self._actions.pack(fill="x", pady=4)
+        self._actions = self._ttk.LabelFrame(main, text="操作", padding=4)
+        self._actions.grid(row=4, column=0, sticky="ew", pady=2)
         self._ttk.Label(self._actions, text="操作待ちではありません").pack()
 
-        log_frame = self._ttk.LabelFrame(main, text="進行・局結果", padding=6)
-        log_frame.pack(fill="both", pady=(4, 0))
+        log_frame = self._ttk.LabelFrame(main, text="進行・局結果", padding=4)
+        log_frame.grid(row=5, column=0, sticky="ew", pady=(2, 0))
+        log_frame.columnconfigure(0, weight=1)
         self._log = self._scrolledtext.ScrolledText(
             log_frame,
-            height=10,
+            height=_LOG_VISIBLE_LINES,
             wrap="word",
             state="disabled",
         )
-        self._log.pack(fill="both", expand=True)
+        self._log.grid(row=0, column=0, sticky="ew")
 
     def _start_session(self) -> None:
         if self._bridge is not None:
