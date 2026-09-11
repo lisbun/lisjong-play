@@ -16,8 +16,11 @@ from lisjong_play.gui_model import (
 )
 
 RIVER_ROW_SIZE = 6
-TILE_IMAGE_SUBSAMPLE = 12
-RIVER_TILE_IMAGE_SUBSAMPLE = 18
+# 600x800 assets -> about 33x44 for hand / meld / dora, 22x29 for river.
+# Manual Windows validation showed the previous 50x66 / 33x44 pair still consumed
+# too much vertical space and could push the hand / controls below the viewport.
+TILE_IMAGE_SUBSAMPLE = 18
+RIVER_TILE_IMAGE_SUBSAMPLE = 27
 
 POSITION_GRID = {
     "top": (0, 1),
@@ -36,7 +39,6 @@ def load_river_tile_image(tk: Any, path: str) -> Any:
     """vendored牌画像を河専用のより小さい表示sizeへ変換する。
 
     最大4row x 6枚の河をseat frame内へ収めるため、手牌より小さいscaleを使う。
-    手牌の操作性へ影響させないよう、河以外はこのsizeを使わない。
     """
     return tk.PhotoImage(file=path).subsample(RIVER_TILE_IMAGE_SUBSAMPLE)
 
@@ -124,22 +126,22 @@ class GuiBoardRenderer:
 
         clear_frame(center)
         self._ttk.Label(center, text=board.round_label, style="Center.TLabel").pack(
-            pady=(8, 4)
+            pady=(2, 1)
         )
-        self._ttk.Label(center, text=board.center_detail).pack(pady=4)
-        self._ttk.Label(center, text="ドラ表示牌").pack(pady=(4, 0))
+        self._ttk.Label(center, text=board.center_detail).pack(pady=1)
+        self._ttk.Label(center, text="ドラ表示牌").pack(pady=(1, 0))
         dora_row = self._ttk.Frame(center)
-        dora_row.pack(pady=(0, 4))
+        dora_row.pack(pady=(0, 1))
         if board.dora_indicators:
             for tile_label in board.dora_indicators:
-                self.tile_image_label(dora_row, tile_label).pack(side="left", padx=1)
+                self.tile_image_label(dora_row, tile_label).pack(side="left")
         else:
             self._ttk.Label(dora_row, text="なし").pack()
         self._ttk.Label(
             center,
             text=f"判断\n{board.decision_label}",
             justify="center",
-        ).pack(pady=4)
+        ).pack(pady=1)
 
         clear_frame(hand)
         tiles = self._ttk.Frame(hand)
@@ -147,15 +149,15 @@ class GuiBoardRenderer:
         discard_actions = hand_discard_actions(actions)
         for value in board.hand_tiles:
             self.tile_control(tiles, value, discard_actions.get(value)).pack(
-                side="left", padx=2
+                side="left", padx=1
             )
         if board.drawn_tile is not None:
             self._ttk.Separator(tiles, orient="vertical").pack(
-                side="left", fill="y", padx=8
+                side="left", fill="y", padx=4
             )
             tsumogiri_action = drawn_tile_tsumogiri_action(actions, board.drawn_tile)
             self.tile_control(tiles, board.drawn_tile, tsumogiri_action).pack(
-                side="left", padx=2
+                side="left", padx=1
             )
 
     def render_seat(self, frame: Any, seat: GuiSeatView) -> None:
@@ -166,9 +168,9 @@ class GuiBoardRenderer:
             status += f"  /  {seat.riichi}"
         self._ttk.Label(frame, text=status).pack(anchor="w")
 
-        self._ttk.Label(frame, text="副露:").pack(anchor="w", pady=(4, 0))
+        self._ttk.Label(frame, text="副露:").pack(anchor="w", pady=(1, 0))
         melds_row = self._ttk.Frame(frame)
-        melds_row.pack(anchor="w", pady=(0, 4))
+        melds_row.pack(anchor="w", pady=(0, 1))
         if not seat.melds:
             self._ttk.Label(melds_row, text="なし").pack(side="left")
         else:
@@ -185,10 +187,10 @@ class GuiBoardRenderer:
                 row = self._ttk.Frame(river_box)
                 row.pack(anchor="w")
                 for cell in seat.river[start : start + RIVER_ROW_SIZE]:
-                    self.render_river_tile(row, cell).pack(side="left", padx=1)
+                    self.render_river_tile(row, cell).pack(side="left")
 
     def render_meld(self, parent: Any, meld: GuiMeldView) -> None:
-        box = self._ttk.Frame(parent, padding=(0, 0, 6, 0))
+        box = self._ttk.Frame(parent, padding=(0, 0, 3, 0))
         box.pack(side="left")
         self._ttk.Label(box, text=meld.type_label, font=("TkDefaultFont", 8)).pack()
         tiles_row = self._ttk.Frame(box)
@@ -209,7 +211,7 @@ class GuiBoardRenderer:
         self.river_tile_image_label(box, cell.tile).pack()
         caption = river_caption(cell)
         if caption:
-            self._ttk.Label(box, text=caption, font=("TkDefaultFont", 8)).pack()
+            self._ttk.Label(box, text=caption, font=("TkDefaultFont", 7)).pack()
         return box
 
     def tile_image(self, tile_label: str) -> Any:
