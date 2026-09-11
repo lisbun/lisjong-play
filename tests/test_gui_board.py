@@ -74,6 +74,24 @@ class GuiBoardRendererContractTest(unittest.TestCase):
         with self.assertRaises(TypeError):
             GuiBoardRenderer(Mock(), Mock(), Mock(), on_select_action="not callable")
 
+    def test_seat_title_compacts_label_score_and_riichi_into_one_line(self) -> None:
+        board = renderer()
+        frame = Mock(winfo_children=Mock(return_value=[]))
+
+        board.render_seat(
+            frame,
+            GuiSeatView(
+                position="right",
+                label="P2（南家）",
+                score=24000,
+                riichi="立直",
+                melds=(),
+                river=(),
+            ),
+        )
+
+        frame.configure.assert_called_once_with(text="P2（南家）  24000点 / 立直")
+
 
 class GuiTileImageRegistrySharingTest(unittest.TestCase):
     """副露 / ドラ表示牌が手牌と同じregistryを、河だけが河専用registryを使うことを検証する。"""
@@ -95,7 +113,6 @@ class GuiTileImageRegistrySharingTest(unittest.TestCase):
         self.assertIs(kwargs["image"], board._river_tile_images.get.return_value)
 
     def test_same_tile_label_resolves_to_distinct_hand_and_river_images(self) -> None:
-        """同じtile labelでも、size別registryは別のcache objectを返す。"""
         hand_images = TileImageRegistry(lambda path: ("hand", path))
         river_images = TileImageRegistry(lambda path: ("river", path))
         board = GuiBoardRenderer(Mock(), hand_images, river_images)
@@ -122,7 +139,7 @@ class GuiTileImageRegistrySharingTest(unittest.TestCase):
         )
         board._river_tile_images.get.assert_not_called()
 
-    def test_meld_caption_shows_the_called_tile_when_present(self) -> None:
+    def test_meld_caption_keeps_called_tile_and_source_on_one_compact_line(self) -> None:
         board = renderer()
 
         board.render_meld(Mock(), GuiMeldView("ポン", ("1m", "1m", "1m"), "P2", "1m"))
@@ -132,9 +149,9 @@ class GuiTileImageRegistrySharingTest(unittest.TestCase):
             for call in board._ttk.Label.call_args_list
             if "text" in call.kwargs
         ]
-        self.assertIn("called 1m", label_texts)
+        self.assertIn("ポン / from P2 / called 1m", label_texts)
 
-    def test_meld_caption_omits_the_called_tile_for_a_concealed_meld(self) -> None:
+    def test_meld_caption_omits_called_tile_for_a_concealed_meld(self) -> None:
         board = renderer()
 
         board.render_meld(
@@ -146,7 +163,7 @@ class GuiTileImageRegistrySharingTest(unittest.TestCase):
             for call in board._ttk.Label.call_args_list
             if "text" in call.kwargs
         ]
-        self.assertFalse(any(text.startswith("called") for text in label_texts))
+        self.assertEqual(["暗槓"], label_texts)
 
     def test_dora_indicators_look_up_their_images_from_the_shared_registry(
         self,
@@ -204,8 +221,6 @@ class GuiRiverLayoutTest(unittest.TestCase):
 
 
 class GuiTileImageScaleTest(unittest.TestCase):
-    """河牌が手牌より小さいsubsample scaleで生成されることを検証する。"""
-
     def test_river_scale_is_smaller_than_the_hand_scale(self) -> None:
         self.assertGreater(RIVER_TILE_IMAGE_SUBSAMPLE, TILE_IMAGE_SUBSAMPLE)
 
@@ -284,7 +299,6 @@ class GuiTileControlTest(unittest.TestCase):
         )
 
     def test_without_a_selection_handler_every_tile_stays_a_label(self) -> None:
-        """Replayのように選択が存在しない表示ではbuttonを作らない。"""
         board = renderer()
 
         control = board.tile_control(Mock(), "5m", action_view(1, tile_label="5m"))
