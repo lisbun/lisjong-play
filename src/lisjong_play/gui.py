@@ -45,7 +45,7 @@ class GuiUnavailableError(RuntimeError):
 _ACTION_CONTROL_WIDTH = 16
 _ACTION_ROW_CAPACITY = 14
 _WIDE_ACTION_UNITS = 4
-_LOG_VISIBLE_LINES = 3
+_LOG_VISIBLE_LINES = 2
 _HAND_DISCARD_INSTRUCTION = "手牌から打牌を選択してください。"
 _HAND_STYLES = frozenset({"discard", "tsumogiri"})
 
@@ -227,9 +227,13 @@ class _TkGuiApplication:
             justify="center",
         ).pack()
 
-        self._ttk.Label(main, text=GUI_RIVER_LEGEND).grid(
-            row=2, column=0, sticky="ew", pady=(2, 0)
-        )
+        # 凡例は卓の空いた左下の角へ置き、卓の外に1行を使わない。
+        self._ttk.Label(
+            self._table,
+            text=GUI_RIVER_LEGEND,
+            style="BoardText.TLabel",
+            font=("TkDefaultFont", 8),
+        ).place(relx=0.0, rely=1.0, anchor="sw")
 
         self._hand = self._ttk.LabelFrame(main, text="あなたの手牌", padding=4)
         self._hand.grid(row=3, column=0, sticky="ew", pady=(4, 2))

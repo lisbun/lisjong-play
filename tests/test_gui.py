@@ -63,7 +63,8 @@ class GuiEntryPointTest(unittest.TestCase):
 
 class GuiActionLayoutTest(unittest.TestCase):
     def test_progress_log_is_bounded_to_a_compact_number_of_lines(self) -> None:
-        self.assertEqual(3, _LOG_VISIBLE_LINES)
+        """logは卓の縦幅を優先して2行に抑える。スクロールで過去分は読める。"""
+        self.assertEqual(2, _LOG_VISIBLE_LINES)
 
     def test_wide_action_label_wraps_at_semantic_separator(self) -> None:
         action = action_view(0, style="action", tile_label=None)

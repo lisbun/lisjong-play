@@ -18,14 +18,14 @@ from lisjong_play.gui_model import (
 from lisjong_play.tile_images import TileImageRegistry
 
 RIVER_ROW_SIZE = 6
-# 牌画像は用途ごとに3段階へ縮小する。600x800のvendored原寸に対し、
-# 手牌 約33x44 / 河 約21x28 / 副露・ドラ表示牌 約20x26。
-# 選択対象の手牌を一番大きく保ち、読み取る頻度の高い河をその次に、
-# 補助情報である副露・ドラ表示牌を一番小さくする。
-# default 1180x860でも minimum 920x700でも手牌領域が隠れない範囲に収める。
+# 牌画像のsize。600x800のvendored原寸に対し、手牌 約33x44 /
+# 河・副露・ドラ表示牌 約23x30。選択対象の手牌だけを大きく保ち、
+# 卓上の牌は同じsizeで揃える。
+# default 1180x860でも minimum 920x700でも、最長の河と副露を同時に
+# 表示して卓からはみ出さない範囲に収める。
 HAND_TILE_IMAGE_SUBSAMPLE = 18
-RIVER_TILE_IMAGE_SUBSAMPLE = 28
-BOARD_TILE_IMAGE_SUBSAMPLE = 30
+RIVER_TILE_IMAGE_SUBSAMPLE = 26
+BOARD_TILE_IMAGE_SUBSAMPLE = RIVER_TILE_IMAGE_SUBSAMPLE
 
 # ツモ切り牌は彩度を落としたgrayscale画像で示す。text markerを読ませるより、
 # 河を一目で見分けられるオンライン麻雀の表示に寄せる。
@@ -33,8 +33,8 @@ TSUMOGIRI_GRAY_MIX = 0.85
 
 # 中央の卓情報から見た、各seatを置く隙間(px)。実卓と同じく、4人の河が
 # 中央情報を囲む形にするため、seatは卓の端ではなく中央を基準に配置する。
-CENTER_GAP_X = 130
-CENTER_GAP_Y = 62
+CENTER_GAP_X = 135
+CENTER_GAP_Y = 47
 
 # Live / Replay双方で、卓を3x3の巨大セルへ分割せず、緑背景上に
 # content-sized seatを浮かせるためのanchor。(relx, rely, anchor, x, y)で、
@@ -231,6 +231,17 @@ def build_board_tile_images(tk: Any) -> BoardTileImages:
 GUI_RIVER_LEGEND = "河の表記: 灰色 = ツモ切り / [立] = 立直宣言牌 / →Pn = 鳴かれた牌"
 
 
+def meld_caption(meld: GuiMeldView) -> str:
+    """副露へ添える最小限のtext marker。
+
+    鳴いた相手だけを`→Pn`で示す。鳴いた牌自体は晒された牌の中に見えているため
+    textでは繰り返さない。卓の横幅を副露のtextで食わないようにする。
+    """
+    if meld.from_seat is None:
+        return meld.type_label
+    return f"{meld.type_label}→{meld.from_seat}"
+
+
 def river_caption(cell: GuiRiverTile) -> str:
     """河牌画像へ添える、立直宣言 / 鳴かれた牌のtext marker。
 
@@ -316,6 +327,8 @@ class GuiBoardRenderer:
             self._ttk.Label(dora_line, text="なし", style="BoardText.TLabel").pack(
                 side="left"
             )
+        # 判断は独立行。ドラと同じ行へ置くと中央情報が横に広がり、
+        # 左右の席の河と重なるため。
         self._ttk.Label(
             center, text=f"判断: {board.decision_label}", style="BoardText.TLabel"
         ).pack()
@@ -380,19 +393,15 @@ class GuiBoardRenderer:
                     self.render_river_tile(row, cell).pack(side="left")
 
     def render_meld(self, parent: Any, meld: GuiMeldView) -> None:
-        box = self._ttk.Frame(parent, style="Seat.TFrame", padding=(0, 0, 3, 0))
-        box.pack(side="left", anchor="n")
-        meta = [meld.type_label]
-        if meld.from_seat is not None:
-            meta.append(f"from {meld.from_seat}")
-        if meld.called_tile is not None:
-            meta.append(f"called {meld.called_tile}")
+        """副露を1組ずつ縦に積む。複数組でも横幅を増やさない。"""
+        box = self._ttk.Frame(parent, style="Seat.TFrame", padding=(0, 0, 0, 2))
+        box.pack(side="top", anchor="w")
         self._ttk.Label(
             box,
-            text=" / ".join(meta),
+            text=meld_caption(meld),
             style="BoardText.TLabel",
             font=("TkDefaultFont", 7),
-        ).pack()
+        ).pack(anchor="w")
         tiles_row = self._ttk.Frame(box, style="Seat.TFrame")
         tiles_row.pack()
         for tile_label in meld.tiles:
@@ -410,7 +419,7 @@ class GuiBoardRenderer:
                 text=caption,
                 style="BoardText.TLabel",
                 font=("TkDefaultFont", 6),
-            ).pack()
+            ).pack(pady=(0, 0))
         return box
 
     def tile_image(self, tile_label: str) -> Any:

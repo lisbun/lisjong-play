@@ -17,6 +17,7 @@ from lisjong_play.gui_board import (
     load_board_tile_image,
     load_river_tile_image,
     load_tile_image,
+    meld_caption,
     river_caption,
     seat_melds_come_first,
     seat_part_side,
@@ -188,9 +189,8 @@ class GuiTileImageRegistrySharingTest(unittest.TestCase):
         )
         board._tile_images.river.get.assert_not_called()
 
-    def test_meld_caption_keeps_called_tile_and_source_on_one_compact_line(
-        self,
-    ) -> None:
+    def test_meld_caption_names_only_the_type_and_the_called_seat(self) -> None:
+        """鳴いた牌は晒された牌に見えているため、textでは繰り返さない。"""
         board = renderer()
 
         board.render_meld(Mock(), GuiMeldView("ポン", ("1m", "1m", "1m"), "P2", "1m"))
@@ -200,7 +200,7 @@ class GuiTileImageRegistrySharingTest(unittest.TestCase):
             for call in board._ttk.Label.call_args_list
             if "text" in call.kwargs
         ]
-        self.assertIn("ポン / from P2 / called 1m", label_texts)
+        self.assertEqual(["ポン→P2"], label_texts)
 
     def test_meld_caption_omits_called_tile_for_a_concealed_meld(self) -> None:
         board = renderer()
@@ -272,10 +272,10 @@ class GuiRiverLayoutTest(unittest.TestCase):
 
 
 class GuiTileImageScaleTest(unittest.TestCase):
-    def test_scales_shrink_from_hand_to_river_to_board(self) -> None:
-        """手牌 > 河 > 副露・ドラ表示牌 の順に小さくなる。"""
+    def test_the_hand_is_larger_than_the_tiles_on_the_table(self) -> None:
+        """手牌だけが大きく、河と副露・ドラ表示牌は同じsize。"""
         self.assertLess(HAND_TILE_IMAGE_SUBSAMPLE, RIVER_TILE_IMAGE_SUBSAMPLE)
-        self.assertLess(RIVER_TILE_IMAGE_SUBSAMPLE, BOARD_TILE_IMAGE_SUBSAMPLE)
+        self.assertEqual(BOARD_TILE_IMAGE_SUBSAMPLE, RIVER_TILE_IMAGE_SUBSAMPLE)
 
     def test_hand_image_factory_uses_the_hand_subsample(self) -> None:
         tk = Mock()
@@ -558,6 +558,39 @@ class GuiBoardTileImageBundleTest(unittest.TestCase):
 
         registries = (images.hand, images.board, images.river, images.river_tsumogiri)
         self.assertEqual(4, len({id(registry) for registry in registries}))
+
+
+class GuiMeldCaptionTest(unittest.TestCase):
+    def test_a_called_meld_names_the_seat_it_was_called_from(self) -> None:
+        self.assertEqual(
+            "ポン→P2", meld_caption(GuiMeldView("ポン", ("1m",), "P2", "1m"))
+        )
+
+    def test_a_concealed_meld_is_only_the_type(self) -> None:
+        self.assertEqual("暗槓", meld_caption(GuiMeldView("暗槓", ("1m",), None, None)))
+
+
+class GuiMeldStackingTest(unittest.TestCase):
+    def test_each_meld_group_is_stacked_vertically(self) -> None:
+        """副露が複数組でも、横幅ではなく縦へ積む。"""
+        board = renderer()
+        parent = Mock()
+        boxes: list[Any] = []
+
+        def frame_factory(frame_parent, **_kwargs):
+            widget = Mock()
+            if frame_parent is parent:
+                boxes.append(widget)
+            return widget
+
+        board._ttk.Frame.side_effect = frame_factory
+
+        for _ in range(3):
+            board.render_meld(parent, GuiMeldView("ポン", ("1m",), "P2", "1m"))
+
+        self.assertEqual(3, len(boxes))
+        for box in boxes:
+            box.pack.assert_called_once_with(side="top", anchor="w")
 
 
 class GuiRiverCaptionTest(unittest.TestCase):
