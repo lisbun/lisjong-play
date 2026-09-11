@@ -8,6 +8,12 @@ import threading
 from collections.abc import Callable, Sequence
 from typing import Any, cast
 
+from lisjong_play.gui_board import (
+    POSITION_GRID,
+    GuiBoardRenderer,
+    clear_frame,
+    load_tile_image,
+)
 from lisjong_play.gui_bridge import (
     DecisionRequested,
     GuiBridgeError,
@@ -20,13 +26,7 @@ from lisjong_play.gui_bridge import (
     SessionFinished,
     run_gui_worker,
 )
-from lisjong_play.gui_model import (
-    GuiActionView,
-    GuiBoardView,
-    GuiMeldView,
-    GuiRiverTile,
-    GuiSeatView,
-)
+from lisjong_play.gui_model import GuiActionView, GuiBoardView
 from lisjong_play.renderer import RIVER_LEGEND
 from lisjong_play.session import (
     DEFAULT_OPPONENT,
@@ -44,8 +44,6 @@ class GuiUnavailableError(RuntimeError):
 _ACTION_CONTROL_WIDTH = 16
 _ACTION_ROW_CAPACITY = 14
 _WIDE_ACTION_UNITS = 4
-_RIVER_ROW_SIZE = 6
-_TILE_IMAGE_SUBSAMPLE = 12
 _HAND_DISCARD_INSTRUCTION = "手牌から打牌を選択してください。"
 _HAND_STYLES = frozenset({"discard", "tsumogiri"})
 
@@ -54,33 +52,6 @@ def _only_pass_option_index(actions: Sequence[GuiActionView]) -> int | None:
     """選択の余地がないpass requestだけをGUI操作なしで確定する。"""
     if len(actions) == 1 and actions[0].style == "pass":
         return actions[0].option_index
-    return None
-
-
-def _hand_discard_actions(
-    actions: Sequence[GuiActionView],
-) -> dict[str, GuiActionView]:
-    """表示中の concealed-hand tile label → 対応する打牌 GuiActionView。
-
-    同一tile_labelの打牌optionはengine projectionで常に1件へcollapseされる
-    ため、同じ表示牌が複数あってもsame option_indexへ安全に対応付く。
-    """
-    return {
-        action.tile_label: action
-        for action in actions
-        if action.style == "discard" and action.tile_label is not None
-    }
-
-
-def _drawn_tile_tsumogiri_action(
-    actions: Sequence[GuiActionView], drawn_tile: str | None
-) -> GuiActionView | None:
-    """表示中の drawn tileへ一致するツモ切り GuiActionViewだけを返す。"""
-    if drawn_tile is None:
-        return None
-    for action in actions:
-        if action.style == "tsumogiri" and action.tile_label == drawn_tile:
-            return action
     return None
 
 
@@ -122,21 +93,6 @@ def _action_button_attributes(action: GuiActionView) -> tuple[str, str, int]:
     )
 
 
-def _load_tile_image(tk: Any, path: str) -> Any:
-    """vendored牌画像を原寸からGUI表示向けの縮小sizeへ変換する。"""
-    return tk.PhotoImage(file=path).subsample(_TILE_IMAGE_SUBSAMPLE)
-
-
-def _river_caption(cell: GuiRiverTile) -> str:
-    """河牌画像へ添える、tsumogiri / 立直宣言 / 鳴かれた牌のtext marker。"""
-    caption = "*" if cell.is_tsumogiri else ""
-    if cell.is_riichi_declaration:
-        caption = f"[{caption}]"
-    if cell.called_by is not None:
-        caption += f"→{cell.called_by}"
-    return caption
-
-
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lisjong-play-gui",
@@ -157,27 +113,22 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _load_tk() -> tuple[Any, Any, Any, Any]:
+def load_tk() -> tuple[Any, Any, Any, Any, Any]:
+    """live GUIとReplay Viewerが共有するTk moduleのbootstrap。"""
     try:
         import tkinter as tk
-        from tkinter import messagebox, scrolledtext, ttk
+        from tkinter import filedialog, messagebox, scrolledtext, ttk
     except ImportError as error:
         raise GuiUnavailableError(
             "Tkinterを読み込めません。Tk対応のPython 3.14を使用してください。"
         ) from error
-    return tk, ttk, messagebox, scrolledtext
+    return tk, ttk, messagebox, scrolledtext, filedialog
 
 
 class _TkGuiApplication:
     """Tk main threadだけでwidgetを操作するprototype application。"""
 
     _POLL_INTERVAL_MS = 40
-    _POSITION_GRID = {
-        "top": (0, 1),
-        "left": (1, 0),
-        "right": (1, 2),
-        "bottom": (2, 1),
-    }
 
     def __init__(
         self,
@@ -198,7 +149,10 @@ class _TkGuiApplication:
         self._bridge: GuiSessionBridge | None = None
         self._worker: threading.Thread | None = None
         self._active_decision_id: int | None = None
-        self._tile_images = TileImageRegistry(lambda path: _load_tile_image(tk, path))
+        self._tile_images = TileImageRegistry(lambda path: load_tile_image(tk, path))
+        self._board_renderer = GuiBoardRenderer(
+            ttk, self._tile_images, on_select_action=self._choose_action
+        )
 
         root.title("lisjong-play GUI prototype")
         root.geometry("1180x860")
@@ -264,7 +218,7 @@ class _TkGuiApplication:
             self._table.rowconfigure(index, weight=1)
 
         self._seat_frames: dict[str, Any] = {}
-        for position, (row, column) in self._POSITION_GRID.items():
+        for position, (row, column) in POSITION_GRID.items():
             frame = self._ttk.LabelFrame(
                 self._table,
                 text=position,
@@ -318,7 +272,7 @@ class _TkGuiApplication:
         opponent = cast(OpponentName, opponent_value)
 
         self._set_setup_enabled(False)
-        self._clear_frame(self._actions)
+        clear_frame(self._actions)
         self._ttk.Label(self._actions, text="engineを開始しています…").pack()
         self._clear_log()
         self._append_log(f"対局開始: Human EAST vs {opponent} x3 / seed={seed}")
@@ -377,125 +331,17 @@ class _TkGuiApplication:
     def _render_board(
         self, board: GuiBoardView, actions: Sequence[GuiActionView]
     ) -> None:
-        by_position = {seat.position: seat for seat in board.seats}
-        for position, frame in self._seat_frames.items():
-            self._render_seat(frame, by_position[position])
-
-        self._clear_frame(self._center)
-        self._ttk.Label(
-            self._center, text=board.round_label, style="Center.TLabel"
-        ).pack(pady=(8, 4))
-        self._ttk.Label(self._center, text=board.center_detail).pack(pady=4)
-        self._ttk.Label(self._center, text="ドラ表示牌").pack(pady=(4, 0))
-        dora_row = self._ttk.Frame(self._center)
-        dora_row.pack(pady=(0, 4))
-        if board.dora_indicators:
-            for tile_label in board.dora_indicators:
-                self._tile_image_label(dora_row, tile_label).pack(side="left", padx=1)
-        else:
-            self._ttk.Label(dora_row, text="なし").pack()
-        self._ttk.Label(
-            self._center,
-            text=f"判断\n{board.decision_label}",
-            justify="center",
-        ).pack(pady=4)
-
-        self._clear_frame(self._hand)
-        tiles = self._ttk.Frame(self._hand)
-        tiles.pack(anchor="center")
-        discard_actions = _hand_discard_actions(actions)
-        for value in board.hand_tiles:
-            self._tile_control(tiles, value, discard_actions.get(value)).pack(
-                side="left", padx=2
-            )
-        if board.drawn_tile is not None:
-            self._ttk.Separator(tiles, orient="vertical").pack(
-                side="left", fill="y", padx=8
-            )
-            tsumogiri_action = _drawn_tile_tsumogiri_action(actions, board.drawn_tile)
-            self._tile_control(tiles, board.drawn_tile, tsumogiri_action).pack(
-                side="left", padx=2
-            )
-
-    def _render_seat(self, frame: Any, seat: GuiSeatView) -> None:
-        self._clear_frame(frame)
-        frame.configure(text=seat.label)
-        status = f"{seat.score}点"
-        if seat.riichi:
-            status += f"  /  {seat.riichi}"
-        self._ttk.Label(frame, text=status).pack(anchor="w")
-
-        self._ttk.Label(frame, text="副露:").pack(anchor="w", pady=(4, 0))
-        melds_row = self._ttk.Frame(frame)
-        melds_row.pack(anchor="w", pady=(0, 4))
-        if not seat.melds:
-            self._ttk.Label(melds_row, text="なし").pack(side="left")
-        else:
-            for meld in seat.melds:
-                self._render_meld(melds_row, meld)
-
-        self._ttk.Label(frame, text="河:").pack(anchor="w")
-        river_box = self._ttk.Frame(frame)
-        river_box.pack(anchor="w")
-        if not seat.river:
-            self._ttk.Label(river_box, text="-").pack(anchor="w")
-        else:
-            for start in range(0, len(seat.river), _RIVER_ROW_SIZE):
-                row = self._ttk.Frame(river_box)
-                row.pack(anchor="w")
-                for cell in seat.river[start : start + _RIVER_ROW_SIZE]:
-                    self._render_river_tile(row, cell).pack(side="left", padx=1)
-
-    def _render_meld(self, parent: Any, meld: GuiMeldView) -> None:
-        box = self._ttk.Frame(parent, padding=(0, 0, 6, 0))
-        box.pack(side="left")
-        self._ttk.Label(box, text=meld.type_label, font=("TkDefaultFont", 8)).pack()
-        tiles_row = self._ttk.Frame(box)
-        tiles_row.pack()
-        for tile_label in meld.tiles:
-            self._tile_image_label(tiles_row, tile_label).pack(side="left")
-        if meld.from_seat is not None:
-            self._ttk.Label(
-                box, text=f"from {meld.from_seat}", font=("TkDefaultFont", 8)
-            ).pack()
-        if meld.called_tile is not None:
-            self._ttk.Label(
-                box, text=f"called {meld.called_tile}", font=("TkDefaultFont", 8)
-            ).pack()
-
-    def _render_river_tile(self, parent: Any, cell: GuiRiverTile) -> Any:
-        box = self._ttk.Frame(parent)
-        self._tile_image_label(box, cell.tile).pack()
-        caption = _river_caption(cell)
-        if caption:
-            self._ttk.Label(box, text=caption, font=("TkDefaultFont", 8)).pack()
-        return box
-
-    def _tile_image(self, tile_label: str) -> Any:
-        return self._tile_images.get(tile_label)
-
-    def _tile_image_label(self, parent: Any, tile_label: str) -> Any:
-        return self._ttk.Label(
-            parent, image=self._tile_image(tile_label), style="TileImage.TLabel"
-        )
-
-    def _tile_control(
-        self, parent: Any, value: str, action: GuiActionView | None
-    ) -> Any:
-        """legal打牌に対応する表示牌画像はbuttonへ、それ以外はlabelのままにする。"""
-        photo = self._tile_image(value)
-        if action is None:
-            return self._ttk.Label(parent, image=photo, style="TileImage.TLabel")
-        return self._ttk.Button(
-            parent,
-            image=photo,
-            style="TileImage.TButton",
-            command=lambda index=action.option_index: self._choose_action(index),
+        self._board_renderer.render_board(
+            board,
+            actions,
+            seat_frames=self._seat_frames,
+            center=self._center,
+            hand=self._hand,
         )
 
     def _render_actions(self, event: DecisionRequested) -> None:
         self._active_decision_id = event.request_id
-        self._clear_frame(self._actions)
+        clear_frame(self._actions)
         non_hand_actions = _non_hand_actions(event.actions)
         if not non_hand_actions:
             self._ttk.Label(self._actions, text=_HAND_DISCARD_INSTRUCTION).pack()
@@ -527,13 +373,13 @@ class _TkGuiApplication:
             self._messagebox.showerror("操作エラー", str(error))
             return
         self._active_decision_id = None
-        self._clear_frame(self._actions)
+        clear_frame(self._actions)
         self._ttk.Label(self._actions, text="AI / engineの進行を待っています…").pack()
         self._status_var.set("engine実行中")
 
     def _render_round_confirmation(self, confirmation_id: int | None) -> None:
         self._active_decision_id = None
-        self._clear_frame(self._actions)
+        clear_frame(self._actions)
         if confirmation_id is None:
             self._ttk.Label(self._actions, text="半荘結果を集計しています…").pack()
             return
@@ -554,7 +400,7 @@ class _TkGuiApplication:
         except GuiBridgeError as error:
             self._messagebox.showerror("操作エラー", str(error))
             return
-        self._clear_frame(self._actions)
+        clear_frame(self._actions)
         self._ttk.Label(self._actions, text="次局を開始しています…").pack()
         self._status_var.set("engine実行中")
 
@@ -578,18 +424,13 @@ class _TkGuiApplication:
         self._worker = None
         self._active_decision_id = None
         self._set_setup_enabled(True)
-        self._clear_frame(self._actions)
+        clear_frame(self._actions)
         self._ttk.Label(self._actions, text="新しい半荘を開始できます").pack()
 
     def _set_setup_enabled(self, enabled: bool) -> None:
         self._seed_entry.configure(state="normal" if enabled else "disabled")
         self._opponent_box.configure(state="readonly" if enabled else "disabled")
         self._start_button.configure(state="normal" if enabled else "disabled")
-
-    @staticmethod
-    def _clear_frame(frame: Any) -> None:
-        for child in frame.winfo_children():
-            child.destroy()
 
     def _close(self) -> None:
         if self._bridge is not None:
@@ -599,7 +440,7 @@ class _TkGuiApplication:
 
 def launch_gui(*, seed: int, opponent: OpponentName) -> None:
     """Tk rootを生成し、desktop GUI prototypeを起動する。"""
-    tk, ttk, messagebox, scrolledtext = _load_tk()
+    tk, ttk, messagebox, scrolledtext, _ = load_tk()
     try:
         root = tk.Tk()
     except tk.TclError as error:
