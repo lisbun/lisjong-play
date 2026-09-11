@@ -9,7 +9,8 @@ from collections.abc import Callable, Sequence
 from typing import Any, cast
 
 from lisjong_play.gui_board import (
-    POSITION_GRID,
+    CENTER_PLACE,
+    TABLE_PLACE,
     GuiBoardRenderer,
     clear_frame,
     load_river_tile_image,
@@ -179,16 +180,13 @@ class _TkGuiApplication:
             borderwidth=2,
             relief="solid",
         )
-        style.configure("Seat.TLabelframe.Label", font=("TkDefaultFont", 11, "bold"))
-        style.configure("Center.TLabel", font=("TkDefaultFont", 12, "bold"))
+        style.configure("Seat.TLabelframe.Label", font=("TkDefaultFont", 10, "bold"))
+        style.configure("Center.TLabel", font=("TkDefaultFont", 11, "bold"))
         style.configure("TileImage.TLabel", padding=1, relief="flat")
         style.configure("TileImage.TButton", padding=1)
         style.configure("Primary.TButton", padding=(12, 8))
 
     def _build_layout(self, *, seed: int, opponent: OpponentName) -> None:
-        # The board is the only vertically elastic surface. Human hand/actions and the
-        # compact progress log keep their requested height, so a long river cannot push
-        # the controls below the window.
         main = self._ttk.Frame(self._root, padding=8)
         main.pack(fill="both", expand=True)
         main.columnconfigure(0, weight=1)
@@ -224,34 +222,32 @@ class _TkGuiApplication:
             side="right", padx=(12, 0)
         )
 
-        self._table = self._ttk.Frame(main, style="Table.TFrame", padding=6)
+        # 緑の卓全体を1枚のcanvas-like surfaceとして使い、各seatをcontent sizeで
+        # anchorする。3x3 cellへstretchしないため、河・副露・textが空き領域を使える。
+        self._table = self._ttk.Frame(main, style="Table.TFrame", padding=4)
         self._table.grid(row=1, column=0, sticky="nsew", pady=(0, 2))
-        for index in range(3):
-            self._table.columnconfigure(index, weight=1)
-            # The outer layout already bounds the table height. Share that bounded
-            # height evenly so P2/P4/center cannot be collapsed while P1/P3 keep their
-            # natural requested height.
-            self._table.rowconfigure(index, weight=1, uniform="table-row")
 
         self._seat_frames: dict[str, Any] = {}
-        for position, (row, column) in POSITION_GRID.items():
+        for position, (relx, rely, anchor) in TABLE_PLACE.items():
             frame = self._ttk.LabelFrame(
                 self._table,
                 text=position,
                 style="Seat.TLabelframe",
-                padding=4,
+                padding=3,
             )
-            frame.grid(row=row, column=column, padx=4, pady=4, sticky="nsew")
+            frame.place(relx=relx, rely=rely, anchor=anchor)
             self._seat_frames[position] = frame
-        self._center = self._ttk.Frame(self._table, padding=6)
-        self._center.grid(row=1, column=1, padx=4, pady=4, sticky="nsew")
+
+        self._center = self._ttk.Frame(self._table, padding=4)
+        relx, rely, anchor = CENTER_PLACE
+        self._center.place(relx=relx, rely=rely, anchor=anchor)
         self._ttk.Label(
             self._center,
             text="卓情報はHuman decision時に更新されます",
             style="Center.TLabel",
             anchor="center",
             justify="center",
-        ).pack(fill="both", expand=True)
+        ).pack()
 
         self._ttk.Label(main, text=RIVER_LEGEND).grid(
             row=2, column=0, sticky="ew", pady=(2, 0)
