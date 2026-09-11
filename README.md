@@ -39,6 +39,30 @@ The launch screen lets you change the deterministic seed and select any opponent
 
 This is deliberately a functional prototype: it does not yet include animation, sound, replay, save/resume, or seat/rule selection. Tkinter must be available in the Python 3.14 installation; the standard Windows installer normally includes it. The engine runs on a worker thread and all Tk operations remain on the GUI main thread, so closing the window also releases a pending Human decision or round confirmation.
 
+## 牌譜Replay Viewer
+
+A third surface replays a **completed `lisjong-arena` durable local game record** in the same Tkinter board, without re-running the engine:
+
+```powershell
+python -m lisjong_play.replay_gui
+python -m lisjong_play.replay_gui path\to\record-bundle
+lisjong-play-replay path\to\record-bundle
+```
+
+Without a path the viewer opens a directory chooser. The record is read only through `lisjong-arena`'s supported strict loader, so an unsupported schema version or a corrupt / truncated / tampered bundle is reported as a human-readable error and never shown as a partial replay. Opening a record never modifies it.
+
+Navigation moves over **recorded seat decisions**: `|< 先頭`, `< 前へ`, `次へ >`, plus `<< 前局` / `次局 >>` for recorded round boundaries (`<< 前局` returns to the current round's start first, then steps back a round). `▶ 再生` / `⏸ 一時停止` drive auto-play and the 速度 selector switches between 0.5x, 1x, 2x and 4x. Speed only changes the wait between frames; it never changes which frames are visited. Playback stops at the last recorded frame, never moves past either boundary, and the timer is released on pause, on manual navigation, and on window close.
+
+The board, seat labels, scores, rivers, melds, riichi state, dora indicators, and round metadata are rendered by the same board renderer and the same tile images as live Human Play. Round results, the final ranking, and the record's own identity / seed / game mode / Policy assignment are shown in the panel below the controls.
+
+The replay is deliberately limited to what the record actually contains:
+
+- Only the seat that owns the current decision has its concealed hand displayed. Durable record v1 guarantees a player-safe own hand per decision seat and no authoritative four-seat concealed-hand history, so other seats' hands are not shown and are never reconstructed.
+- Round results show the recorded outcome, winning seat, deal-in seat, point deltas, and the round's recorded starting scores. Yaku, fu, han, score limits, ura indicators, and exhaustive-draw tenpai seats are **not** in record v1's objective events, so they are not displayed rather than recomputed.
+- Recorded discards carry no riichi-declaration marker, so the river does not mark one.
+
+The viewer never recomputes legality, call priority, scoring, yaku / fu, round progression, hidden hands, or shanten / ukeire, and it never starts an engine game or a Policy during replay.
+
 ### Tile images
 
 The GUI's tile images are vendored PNGs from [FluffyStuff/riichi-mahjong-tiles](https://github.com/FluffyStuff/riichi-mahjong-tiles) (public domain / CC0 1.0), bundled as package resources under `src/lisjong_play/assets/tiles/` and looked up by canonical tile label through `lisjong_play.tile_images`. Lookup does not depend on the process working directory, and no network access is required at runtime. See `src/lisjong_play/assets/tiles/THIRD_PARTY_NOTICE.md` for the exact source revision and license provenance; that CC0 provenance applies only to the vendored image assets and is separate from this repository's own MIT license.
