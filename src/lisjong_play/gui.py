@@ -186,9 +186,9 @@ class _TkGuiApplication:
         style.configure("Primary.TButton", padding=(12, 8))
 
     def _build_layout(self, *, seed: int, opponent: OpponentName) -> None:
-        # The board is the only vertically elastic surface.  Human hand/actions and the
-        # compact progress log keep their requested height, so a long river can no longer
-        # push the controls below the window.
+        # The board is the only vertically elastic surface. Human hand/actions and the
+        # compact progress log keep their requested height, so a long river cannot push
+        # the controls below the window.
         main = self._ttk.Frame(self._root, padding=8)
         main.pack(fill="both", expand=True)
         main.columnconfigure(0, weight=1)
@@ -228,11 +228,10 @@ class _TkGuiApplication:
         self._table.grid(row=1, column=0, sticky="nsew", pady=(0, 2))
         for index in range(3):
             self._table.columnconfigure(index, weight=1)
-        # Top/bottom seats keep their natural compact height.  Only the middle row
-        # absorbs spare/short vertical space.
-        self._table.rowconfigure(0, weight=0)
-        self._table.rowconfigure(1, weight=1)
-        self._table.rowconfigure(2, weight=0)
+            # The outer layout already bounds the table height. Share that bounded
+            # height evenly so P2/P4/center cannot be collapsed while P1/P3 keep their
+            # natural requested height.
+            self._table.rowconfigure(index, weight=1, uniform="table-row")
 
         self._seat_frames: dict[str, Any] = {}
         for position, (row, column) in POSITION_GRID.items():
