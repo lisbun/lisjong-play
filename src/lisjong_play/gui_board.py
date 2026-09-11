@@ -19,12 +19,13 @@ from lisjong_play.tile_images import TileImageRegistry
 
 RIVER_ROW_SIZE = 6
 # 牌画像は用途ごとに3段階へ縮小する。600x800のvendored原寸に対し、
-# 手牌 約33x44 / 副露・ドラ表示牌 約23x30 / 河 約17x23。
-# 選択対象の手牌を一番大きく保ち、卓上の情報ほど小さくすることで、
-# default 1180x860でも minimum 920x700でも手牌領域が隠れない。
+# 手牌 約33x44 / 河 約21x28 / 副露・ドラ表示牌 約20x26。
+# 選択対象の手牌を一番大きく保ち、読み取る頻度の高い河をその次に、
+# 補助情報である副露・ドラ表示牌を一番小さくする。
+# default 1180x860でも minimum 920x700でも手牌領域が隠れない範囲に収める。
 HAND_TILE_IMAGE_SUBSAMPLE = 18
-BOARD_TILE_IMAGE_SUBSAMPLE = 26
-RIVER_TILE_IMAGE_SUBSAMPLE = 34
+RIVER_TILE_IMAGE_SUBSAMPLE = 28
+BOARD_TILE_IMAGE_SUBSAMPLE = 30
 
 # ツモ切り牌は彩度を落としたgrayscale画像で示す。text markerを読ませるより、
 # 河を一目で見分けられるオンライン麻雀の表示に寄せる。

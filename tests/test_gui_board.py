@@ -272,9 +272,10 @@ class GuiRiverLayoutTest(unittest.TestCase):
 
 
 class GuiTileImageScaleTest(unittest.TestCase):
-    def test_scales_shrink_from_hand_to_board_to_river(self) -> None:
-        self.assertLess(HAND_TILE_IMAGE_SUBSAMPLE, BOARD_TILE_IMAGE_SUBSAMPLE)
-        self.assertLess(BOARD_TILE_IMAGE_SUBSAMPLE, RIVER_TILE_IMAGE_SUBSAMPLE)
+    def test_scales_shrink_from_hand_to_river_to_board(self) -> None:
+        """手牌 > 河 > 副露・ドラ表示牌 の順に小さくなる。"""
+        self.assertLess(HAND_TILE_IMAGE_SUBSAMPLE, RIVER_TILE_IMAGE_SUBSAMPLE)
+        self.assertLess(RIVER_TILE_IMAGE_SUBSAMPLE, BOARD_TILE_IMAGE_SUBSAMPLE)
 
     def test_hand_image_factory_uses_the_hand_subsample(self) -> None:
         tk = Mock()
