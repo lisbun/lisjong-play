@@ -7,12 +7,16 @@ legality / scoring / yaku / fu / call priority / round progression / hidden hand
 shanten / ukeireをここで再計算・推測しない。
 
 盤面はrecorded `PolicyInput`のplayer-safe public stateから構築する。durable
-record v1の`PolicyInput`は各decision seat自身のconcealed handしか保証しないため、
+recordの`PolicyInput`は各decision seat自身のconcealed handしか保証しないため、
 複数seatの`PolicyInput`をmergeしてomniscientな4-seat concealed stateを合成しない。
-局結果は objective `GameTrace`へ記録されたeventのvalueだけをそのまま提示する。
+
+局結果はdurable record schema v2がArena側でcaptureしたtyped
+`LocalGameInspection.round_results`のvalueだけをそのまま提示する。objective
+`GameTrace`のraw eventをこちらで再parseして局結果を組み立て直さない。
+`RoundWinFact.scoring`が`None`の局はbackendがscoringを公開していない局であり、
+点数移動や他局のvalueからhan / fu / 役 / 点数を逆算しない。
 """
 
-import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,9 +56,6 @@ _ROUND_WIND_LABELS = {
     "west": "西",
     "north": "北",
 }
-# objective eventのbakazeとrecorded `RoundState.round_wind`は別表現なので、
-# round identityを突き合わせる前に同じvalueへ正規化する。
-_BAKAZE_WIND_VALUES = {"E": "east", "S": "south", "W": "west", "N": "north"}
 _SUIT_SUFFIX = {"manzu": "m", "pinzu": "p", "souzu": "s"}
 _HONOR_LABELS = {1: "東", 2: "南", 3: "西", 4: "北", 5: "白", 6: "發", 7: "中"}
 _MELD_LABELS = {
@@ -69,40 +70,19 @@ _MELD_LABELS = {
 # 再定義しないよう、対応表はここに閉じる。
 _RIICHI_LABELS = {"none": "", "declared": "宣言中", "accepted": "立直"}
 
-# schema v1のbackendが生成するobjective MJAI event type。未知typeはfail closed
-# にするため、ここで明示的にallowlistする。
-_TERMINAL_EVENT_TYPES = frozenset({"hora", "ryukyoku"})
-_KNOWN_EVENT_TYPES = frozenset(
-    {
-        "start_game",
-        "start_kyoku",
-        "tsumo",
-        "dahai",
-        "chi",
-        "pon",
-        "daiminkan",
-        "ankan",
-        "kakan",
-        "reach",
-        "reach_accepted",
-        "dora",
-        "hora",
-        "ryukyoku",
-        "end_kyoku",
-        "end_game",
-        "none",
-    }
-)
-
 # `lisjong-play`はこのschemaのconsumerであり、record schema ownerではない。
 LOCAL_GAME_RECORD_SCHEMA_LABEL = (
-    "lisjong-arena durable local game record v1 (Arena owned / read-only)"
+    "lisjong-arena durable local game record v2 (Arena owned / read-only)"
 )
 
 RECORD_RESULT_COVERAGE_NOTE = (
-    "durable record v1のobjective eventは局結果として outcome / 和了seat / "
-    "放銃seat / 点数移動 / 局開始時点数 だけを保持します。"
-    "役・符・翻・流局時の聴牌者はrecordに含まれないため表示しません。"
+    "durable record v2は局結果として round identity / 点数 / 供託 / ドラ / "
+    "和了seat / 放銃seat / 点数移動 / 流局種別 を保持します。"
+    "和了牌・和了手牌・流局時の聴牌者はrecordに含まれないため表示しません。"
+)
+
+SCORING_UNAVAILABLE_NOTE = (
+    "得点内訳: 記録なし（RiichiEnvがこの局のbackend scoringを公開していません）"
 )
 
 
@@ -118,7 +98,6 @@ def _seat_index(seat: Any) -> int:
     """strict loaderが復元済みのtyped `Seat`を0..3のfixed seat indexへ変換する。
 
     ここはArena / lisjongのtyped contractとして既に検証済みのvalueだけを扱う。
-    raw objective-event JSONのseat scalarは`_raw_seat_index()`で別に検証する。
     """
     if not isinstance(seat, Seat):
         raise ReplayLoadError(f"record contains an unusable seat value: {seat!r}")
@@ -131,10 +110,6 @@ def _seat_index(seat: Any) -> int:
 def seat_name(seat: Any) -> str:
     """半荘中変わらないfixed seatの表示名を返す。"""
     return _SEAT_NAMES[_seat_index(seat)]
-
-
-def _seat_label_for_index(index: int) -> str:
-    return _SEAT_NAMES[index]
 
 
 def _seat_round_label(index: int, dealer_seat: Any) -> str:
@@ -187,7 +162,7 @@ def _tile_sort_key(tile: Any) -> tuple[int, int, bool]:
 def _river_tile(discard: Any) -> GuiRiverTile:
     """recorded discardを河表示へ投影する。
 
-    durable record v1の`Discard`は立直宣言牌markerを持たないため、宣言牌を
+    durable recordの`Discard`は立直宣言牌markerを持たないため、宣言牌を
     推測せず常にmarkerなしとして扱う。
     """
     called_by = discard.called_by
@@ -375,99 +350,22 @@ class ReplayTimeline:
         return self.rounds[self.frames[frame_index].round_index]
 
 
-def _decoded_events(game_trace: Any) -> tuple[dict[str, Any], ...]:
-    decoded = []
-    for event in game_trace.events:
-        try:
-            payload = json.loads(event.event)
-        except ValueError:
-            raise ReplayLoadError("recorded objective event is not valid JSON")
-        if type(payload) is not dict:
-            raise ReplayLoadError("recorded objective event must be a JSON object")
-        event_type = payload.get("type")
-        if type(event_type) is not str or event_type not in _KNOWN_EVENT_TYPES:
-            raise ReplayLoadError(
-                f"record contains an unsupported objective event type: {event_type!r}"
-            )
-        decoded.append(payload)
-    return tuple(decoded)
-
-
-def _required(payload: dict[str, Any], key: str, event_type: str) -> Any:
-    try:
-        return payload[key]
-    except KeyError:
-        raise ReplayLoadError(f"recorded {event_type} event is missing {key!r}")
-
-
-def _raw_int(value: Any, context: str) -> int:
-    """raw objective-event JSONのinteger fieldを暗黙変換なしで検証する。
-
-    `GameTraceEvent`が保証するのはevent全体がvalid JSON objectであることまでで、
-    個々のMJAI fieldの型は固定されていない。`bool` / `float` / `str`をintへ
-    coerceせず、JSON integerだけを受理する(`type(True) is int`はFalseなので
-    boolもここでrejectされる)。
-    """
-    if type(value) is not int:
-        raise ReplayLoadError(f"{context} must be a JSON integer, got {value!r}")
-    return value
-
-
-def _raw_str(value: Any, context: str) -> str:
-    if type(value) is not str:
-        raise ReplayLoadError(f"{context} must be a JSON string, got {value!r}")
-    return value
-
-
-def _raw_seat_index(value: Any, context: str) -> int:
-    """raw objective-event JSONのseat scalarを検証して0..3 indexへ。"""
-    index = _raw_int(value, context)
-    if not 0 <= index < len(_SEAT_NAMES):
-        raise ReplayLoadError(f"{context} is not a seat in 0..3, got {index}")
-    return index
-
-
-def _raw_four_ints(value: Any, event_type: str, key: str) -> tuple[int, ...]:
-    """raw objective-event JSONの4要素integer arrayを検証する。"""
-    context = f"recorded {event_type} event {key!r}"
-    if type(value) is not list:
-        raise ReplayLoadError(f"{context} must be a JSON array, got {value!r}")
-    if len(value) != len(_SEAT_NAMES):
-        raise ReplayLoadError(f"{context} must contain four values")
-    return tuple(
-        _raw_int(item, f"{context}[{index}]") for index, item in enumerate(value)
-    )
-
-
-def _kyoku_identity(payload: dict[str, Any]) -> tuple[str, int, int, int]:
-    """start_kyoku eventから、decision側と突き合わせ可能なround identityを作る。"""
-    bakaze = _raw_str(
-        _required(payload, "bakaze", "start_kyoku"),
-        "recorded start_kyoku event 'bakaze'",
-    )
-    wind = _BAKAZE_WIND_VALUES.get(bakaze)
-    if wind is None:
-        raise ReplayLoadError(f"record contains an unsupported bakaze: {bakaze!r}")
+def _identity(round_result: Any) -> tuple[str, int, int, int]:
+    """typed round-result factからround identityを取り出す。"""
     return (
-        wind,
-        _raw_int(
-            _required(payload, "kyoku", "start_kyoku"),
-            "recorded start_kyoku event 'kyoku'",
-        ),
-        _raw_int(
-            _required(payload, "honba", "start_kyoku"),
-            "recorded start_kyoku event 'honba'",
-        ),
-        _raw_seat_index(
-            _required(payload, "oya", "start_kyoku"),
-            "recorded start_kyoku event 'oya'",
-        ),
+        round_result.round_wind.value,
+        int(round_result.hand_number),
+        int(round_result.honba),
+        _seat_index(round_result.dealer_seat),
     )
 
 
 def _identity_label(identity: tuple[str, int, int, int]) -> str:
     wind, hand_number, honba, _dealer = identity
-    return f"{_ROUND_WIND_LABELS[wind]}{hand_number}局 {honba}本場"
+    label = _ROUND_WIND_LABELS.get(wind)
+    if label is None:
+        raise ReplayLoadError(f"record contains an unsupported round wind: {wind!r}")
+    return f"{label}{hand_number}局 {honba}本場"
 
 
 def _scores_line(caption: str, scores: Sequence[int]) -> str:
@@ -484,90 +382,101 @@ def _deltas_line(deltas: Sequence[int]) -> str:
     return f"点数移動: {body}"
 
 
-def _outcome_lines(terminals: Sequence[dict[str, Any]]) -> list[str]:
-    """recorded terminal eventのvalueだけから局結果行を作る。
+def _tiles_line(caption: str, tiles: Sequence[Any]) -> str | None:
+    if not tiles:
+        return None
+    return f"{caption}: {' '.join(tile_label(tile) for tile in tiles)}"
 
-    役 / 符 / 翻 / 点数計算 / 聴牌判定をここで再構成しない。
+
+def _scoring_lines(scoring: Any, win: Any) -> list[str]:
+    """backendがcaptureしたscoring factsだけを提示する。
+
+    han / fu / 役 / 支払い額はすべてRiichiEnvが計算した値をそのまま出す。
+    ここで点数を再計算したり、翻・符から点数を導出したりしない。
     """
     lines: list[str] = []
-    for payload in terminals:
-        event_type = payload["type"]
-        if event_type == "hora":
-            actor = _raw_seat_index(
-                _required(payload, "actor", "hora"), "recorded hora event 'actor'"
-            )
-            target = _raw_seat_index(
-                _required(payload, "target", "hora"), "recorded hora event 'target'"
-            )
-            is_tsumo = actor == target
-            method = "ツモ" if is_tsumo else "ロン"
-            lines.append(f"結果: 和了 {_seat_label_for_index(actor)}（{method}）")
-            if not is_tsumo:
-                lines.append(f"放銃: {_seat_label_for_index(target)}")
-        else:
-            reason = payload.get("reason")
-            suffix = (
-                ""
-                if reason is None
-                else f" ({_raw_str(reason, "recorded ryukyoku event 'reason'")})"
-            )
-            lines.append(f"結果: 流局{suffix}")
+    if scoring.yakuman:
+        lines.append(f"役満: {int(scoring.han)}倍")
+    else:
+        lines.append(f"翻符: {int(scoring.fu)}符{int(scoring.han)}翻")
+    if scoring.yaku:
+        lines.append("役: " + " / ".join(item.name for item in scoring.yaku))
+    if win.tsumo:
         lines.append(
-            _deltas_line(
-                _raw_four_ints(
-                    _required(payload, "deltas", event_type), event_type, "deltas"
-                )
-            )
+            f"支払い: ツモ 親 {int(scoring.tsumo_points_oya)}点 / "
+            f"子 {int(scoring.tsumo_points_ko)}点"
         )
+    else:
+        lines.append(f"支払い: ロン {int(scoring.ron_points)}点")
+    if scoring.pao_payer is not None:
+        lines.append(f"包: {seat_name(scoring.pao_payer)}")
     return lines
 
 
-def _round_results(
-    events: Sequence[dict[str, Any]],
-) -> tuple[tuple[tuple[str, int, int, int], str], ...]:
-    """objective event順にkyoku segmentを切り、(label, result_text)を返す。
+def _win_lines(win: Any, round_result: Any) -> list[str]:
+    """1つのrecorded和了factを局結果行へ投影する。"""
+    winner = seat_name(win.winner_seat)
+    if win.tsumo:
+        lines = [f"結果: 和了 {winner}（ツモ）"]
+    else:
+        lines = [
+            f"結果: 和了 {winner}（ロン）",
+            f"放銃: {seat_name(win.loser_seat)}",
+        ]
+    lines.append(_deltas_line(win.deltas))
+    # 裏ドラは和了者が立直していた局だけ意味を持つ。Arena側のrecordは`hora`
+    # eventが載せた表示牌をそのまま保持するため、表示可否はrecorded
+    # `riichi_seats`で判断する(Arenaのdurable record文書の指示どおり)。
+    if win.winner_seat in round_result.riichi_seats:
+        ura = _tiles_line("裏ドラ表示牌", win.ura_indicators)
+        if ura is not None:
+            lines.append(ura)
+    if win.scoring is None:
+        lines.append(SCORING_UNAVAILABLE_NOTE)
+    else:
+        lines.extend(_scoring_lines(win.scoring, win))
+    return lines
 
-    RiichiEnvは1 environment step内で前局のhora / ryukyokuと次局のstart_kyokuを
-    まとめて進めることがあるため、step境界ではなくevent順だけでsegmentを切る。
+
+def _draw_lines(draw: Any) -> list[str]:
+    kind = "荒牌平局" if draw.exhaustive else "途中流局"
+    return [
+        f"結果: 流局（{kind}）",
+        f"流局理由: {draw.reason}",
+        _deltas_line(draw.deltas),
+    ]
+
+
+def _round_result_text(round_result: Any) -> str:
+    """typed `RoundResult`のvalueだけから局結果テキストを作る。
+
+    役 / 符 / 翻 / 点数計算 / 聴牌判定をここで再構成しない。
     """
-    segments: list[
-        tuple[tuple[str, int, int, int], tuple[int, ...], list[dict[str, Any]]]
-    ] = []
-    for payload in events:
-        event_type = payload["type"]
-        if event_type == "start_kyoku":
-            segments.append(
-                (
-                    _kyoku_identity(payload),
-                    _raw_four_ints(
-                        _required(payload, "scores", "start_kyoku"),
-                        "start_kyoku",
-                        "scores",
-                    ),
-                    [],
-                )
-            )
-            continue
-        if event_type in _TERMINAL_EVENT_TYPES:
-            if not segments:
-                raise ReplayLoadError(
-                    "record contains a round result before any recorded round start"
-                )
-            segments[-1][2].append(payload)
-
-    results = []
-    for identity, scores, terminals in segments:
-        label = _identity_label(identity)
-        if not terminals:
-            raise ReplayLoadError(
-                f"recorded round {label} has no recorded result event"
-            )
-        lines = [f"--- {label} 終了 ---"]
-        lines.extend(_outcome_lines(terminals))
-        lines.append(_scores_line("局開始時点数", scores))
-        lines.append(RECORD_RESULT_COVERAGE_NOTE)
-        results.append((identity, "\n".join(lines)))
-    return tuple(results)
+    lines = [f"--- {_identity_label(_identity(round_result))} 終了 ---"]
+    dora = _tiles_line("ドラ表示牌", round_result.dora_indicators)
+    if dora is not None:
+        lines.append(dora)
+    if round_result.wins:
+        for win in round_result.wins:
+            lines.extend(_win_lines(win, round_result))
+    elif round_result.draw is not None:
+        lines.extend(_draw_lines(round_result.draw))
+    else:
+        raise ReplayLoadError(
+            "recorded round result has neither a win nor a draw outcome"
+        )
+    if round_result.riichi_seats:
+        lines.append(
+            "立直: " + " / ".join(seat_name(seat) for seat in round_result.riichi_seats)
+        )
+    lines.append(_scores_line("局開始時点数", round_result.start_scores))
+    lines.append(_scores_line("局終了時点数", round_result.end_scores))
+    lines.append(
+        f"供託: {int(round_result.riichi_sticks_before)}本 -> "
+        f"{int(round_result.riichi_sticks_after)}本"
+    )
+    lines.append(RECORD_RESULT_COVERAGE_NOTE)
+    return "\n".join(lines)
 
 
 def _final_result_text(result: Any) -> str:
@@ -646,15 +555,17 @@ def build_timeline(record: Any) -> ReplayTimeline:
     if not frames:
         raise ReplayLoadError("record contains no replayable decision")
 
-    results = _round_results(_decoded_events(inspection.game_trace))
-    if len(results) != len(group_identities):
+    round_results = tuple(inspection.round_results)
+    if len(round_results) != len(group_identities):
         raise ReplayLoadError(
             "recorded decision rounds and recorded round results do not correspond "
-            f"({len(group_identities)} decision rounds, {len(results)} recorded results)"
+            f"({len(group_identities)} decision rounds, "
+            f"{len(round_results)} recorded results)"
         )
-    for index, (recorded, from_decisions) in enumerate(
-        zip([item[0] for item in results], group_identities, strict=True)
+    for index, (round_result, from_decisions) in enumerate(
+        zip(round_results, group_identities, strict=True)
     ):
+        recorded = _identity(round_result)
         if recorded != from_decisions:
             raise ReplayLoadError(
                 f"recorded round {index} identity does not match its decisions: "
@@ -664,13 +575,13 @@ def build_timeline(record: Any) -> ReplayTimeline:
     rounds = tuple(
         ReplayRound(
             index=index,
-            label=_identity_label(identity),
+            label=_identity_label(_identity(round_result)),
             first_frame_index=bounds[0],
             last_frame_index=bounds[1],
-            result_text=results[index][1],
+            result_text=_round_result_text(round_result),
         )
-        for index, (identity, bounds) in enumerate(
-            zip(group_identities, group_bounds, strict=True)
+        for index, (round_result, bounds) in enumerate(
+            zip(round_results, group_bounds, strict=True)
         )
     )
     result = inspection.result
