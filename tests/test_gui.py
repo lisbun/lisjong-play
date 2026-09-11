@@ -122,7 +122,9 @@ class GuiActionLayoutTest(unittest.TestCase):
 
 
 class GuiTableLayoutTest(unittest.TestCase):
-    def test_seat_cards_float_at_table_edges_instead_of_stretching_grid_cells(self) -> None:
+    def test_seat_cards_float_at_table_edges_instead_of_stretching_grid_cells(
+        self,
+    ) -> None:
         application = _TkGuiApplication.__new__(_TkGuiApplication)
         application._root = Mock()
         application._tk = Mock()
