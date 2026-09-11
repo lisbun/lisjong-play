@@ -7,20 +7,26 @@ from unittest.mock import Mock
 from lisjong_play.gui_board import (
     BOARD_TILE_BACKGROUND,
     BOARD_TILE_IMAGE_SUBSAMPLE,
+    CENTER_CLEARANCE,
     HAND_TILE_IMAGE_SUBSAMPLE,
+    MELD_RIVER_GAP,
     RIVER_ROW_SIZE,
+    RIVER_TILE_GAP,
     RIVER_TILE_IMAGE_SUBSAMPLE,
+    TSUMOGIRI_FACE_COLOR,
     BoardTileImages,
     GuiBoardRenderer,
     build_board_tile_images,
     configure_board_styles,
-    desaturate_tile_image,
-    gray_pixel_rows,
+    gray_tile_face,
+    grayed_face_pixel_rows,
     load_board_tile_image,
     load_river_tile_image,
     load_tile_image,
     meld_caption,
+    place_seats_around_center,
     river_caption,
+    seat_center_offset,
     seat_melds_come_first,
     seat_part_side,
     seat_status_side,
@@ -88,6 +94,20 @@ def tile_images(**overrides: Any) -> BoardTileImages:
     return BoardTileImages(**fields)  # type: ignore[arg-type]
 
 
+def board_widget(*, table_width: int = 2000) -> Mock:
+    """中央ブロックのように実寸を返すwidget double。"""
+    return Mock(
+        winfo_children=Mock(return_value=[]),
+        winfo_reqwidth=Mock(return_value=200),
+        winfo_reqheight=Mock(return_value=100),
+        master=Mock(winfo_width=Mock(return_value=table_width)),
+    )
+
+
+def seat_widget(*, width: int = 100) -> Mock:
+    return Mock(winfo_reqwidth=Mock(return_value=width))
+
+
 def renderer(*, on_select_action=None) -> GuiBoardRenderer:
     return GuiBoardRenderer(Mock(), tile_images(), on_select_action=on_select_action)
 
@@ -133,7 +153,6 @@ class GuiTileImageRegistrySharingTest(unittest.TestCase):
 
         board._tile_images.river.get.assert_called_once_with("5pr")
         board._tile_images.hand.get.assert_not_called()
-        board._tile_images.river_tsumogiri.get.assert_not_called()
 
     def test_river_tile_label_uses_the_river_sized_image(self) -> None:
         board = renderer()
@@ -143,17 +162,19 @@ class GuiTileImageRegistrySharingTest(unittest.TestCase):
         _, kwargs = board._ttk.Label.call_args_list[0]
         self.assertIs(kwargs["image"], board._tile_images.river.get.return_value)
 
-    def test_tsumogiri_river_tile_uses_the_desaturated_registry(self) -> None:
+    def test_a_tsumogiri_river_tile_uses_the_grayed_face_registry(self) -> None:
+        """ツモ切りは白地をグレーにした牌画像とグレー背景で示す。"""
         board = renderer()
 
         board.render_river_tile(Mock(), GuiRiverTile("5pr", True, False, None))
 
         board._tile_images.river_tsumogiri.get.assert_called_once_with("5pr")
         board._tile_images.river.get.assert_not_called()
-        _, kwargs = board._ttk.Label.call_args_list[0]
+        _, kwargs = board._ttk.Label.call_args
         self.assertIs(
             kwargs["image"], board._tile_images.river_tsumogiri.get.return_value
         )
+        self.assertEqual("TsumogiriTile.TLabel", kwargs["style"])
 
     def test_same_tile_label_resolves_to_distinct_images_per_usage(self) -> None:
         board = GuiBoardRenderer(
@@ -169,16 +190,13 @@ class GuiTileImageRegistrySharingTest(unittest.TestCase):
         hand_image = board.tile_image("1m")
         board_image = board.board_tile_image("1m")
         river_image = board.river_tile_image("1m")
-        tsumogiri_image = board.river_tile_image("1m", is_tsumogiri=True)
 
         self.assertEqual("board", board_image[0])
         self.assertIs(board_image, board.board_tile_image("1m"))
         self.assertEqual("hand", hand_image[0])
         self.assertEqual("river", river_image[0])
-        self.assertEqual("tsumogiri", tsumogiri_image[0])
         self.assertIs(hand_image, board.tile_image("1m"))
         self.assertIs(river_image, board.river_tile_image("1m"))
-        self.assertIs(tsumogiri_image, board.river_tile_image("1m", is_tsumogiri=True))
 
     def test_meld_tiles_look_up_their_images_from_the_shared_registry(self) -> None:
         board = renderer()
@@ -228,9 +246,10 @@ class GuiTileImageRegistrySharingTest(unittest.TestCase):
             board_view(dora_indicators=("東", "5sr")),
             (),
             seat_frames={
-                position: Mock() for position in ("top", "bottom", "left", "right")
+                position: seat_widget()
+                for position in ("top", "bottom", "left", "right")
             },
-            center=Mock(winfo_children=Mock(return_value=[])),
+            center=board_widget(),
             hand=Mock(winfo_children=Mock(return_value=[])),
         )
 
@@ -380,9 +399,10 @@ class GuiTileControlTest(unittest.TestCase):
             board_view(hand_tiles=("1m", "2m"), drawn_tile="3m"),
             (),
             seat_frames={
-                position: Mock() for position in ("top", "bottom", "left", "right")
+                position: seat_widget()
+                for position in ("top", "bottom", "left", "right")
             },
-            center=Mock(winfo_children=Mock(return_value=[])),
+            center=board_widget(),
             hand=Mock(winfo_children=Mock(return_value=[])),
         )
 
@@ -420,44 +440,39 @@ class FakePhotoImage:
             self.transparent.discard((x, y))
 
 
-class GuiTsumogiriGrayscaleTest(unittest.TestCase):
-    """ツモ切り牌を彩度を落とした画像で示す変換のtest。"""
+class GuiTsumogiriFaceTest(unittest.TestCase):
+    """ツモ切り牌は白地だけをグレーへ置き換える。"""
 
-    def test_pixels_move_toward_their_luma(self) -> None:
-        image = FakePhotoImage([[(200, 0, 0)]])
+    def test_white_face_pixels_become_gray(self) -> None:
+        image = FakePhotoImage([[(255, 255, 255), (250, 248, 252)]])
 
-        rows = gray_pixel_rows(image, mix=1.0)
+        rows = grayed_face_pixel_rows(image)
 
-        self.assertEqual([["#3c3c3c"]], rows)
+        self.assertEqual([[TSUMOGIRI_FACE_COLOR, TSUMOGIRI_FACE_COLOR]], rows)
 
-    def test_a_partial_mix_keeps_some_of_the_original_color(self) -> None:
-        image = FakePhotoImage([[(200, 0, 0)]])
+    def test_colored_glyph_pixels_keep_their_color(self) -> None:
+        image = FakePhotoImage([[(200, 20, 20), (0, 0, 0), (20, 120, 40)]])
 
-        rows = gray_pixel_rows(image, mix=0.5)
+        rows = grayed_face_pixel_rows(image)
 
-        self.assertEqual([["#821e1e"]], rows)
-
-    def test_gray_is_unchanged_by_the_conversion(self) -> None:
-        image = FakePhotoImage([[(128, 128, 128)]])
-
-        self.assertEqual([["#808080"]], gray_pixel_rows(image))
+        self.assertEqual([["#c81414", "#000000", "#147828"]], rows)
 
     def test_a_string_pixel_value_is_accepted(self) -> None:
         image = FakePhotoImage([[(0, 0, 0)]])
-        image.get = lambda x, y: "200 0 0"  # type: ignore[assignment]
+        image.get = lambda x, y: "255 255 255"  # type: ignore[assignment]
 
-        self.assertEqual([["#3c3c3c"]], gray_pixel_rows(image, mix=1.0))
+        self.assertEqual([[TSUMOGIRI_FACE_COLOR]], grayed_face_pixel_rows(image))
 
-    def test_transparent_pixels_stay_transparent_after_conversion(self) -> None:
-        image = FakePhotoImage([[(200, 0, 0), (10, 20, 30)]])
-        image.transparency_set(1, 0, True)
+    def test_transparent_pixels_stay_transparent(self) -> None:
+        image = FakePhotoImage([[(255, 255, 255), (10, 20, 30)]])
+        image.transparency_set(0, 0, True)
 
-        converted = desaturate_tile_image(image)
+        converted = gray_tile_face(image)
 
         self.assertIs(converted, image)
         self.assertEqual(1, len(image.put_calls))
-        self.assertTrue(image.transparency_get(1, 0))
-        self.assertFalse(image.transparency_get(0, 0))
+        self.assertTrue(image.transparency_get(0, 0))
+        self.assertFalse(image.transparency_get(1, 0))
 
 
 class GuiSeatOrientationTest(unittest.TestCase):
@@ -558,7 +573,12 @@ class GuiBoardTileImageBundleTest(unittest.TestCase):
     def test_the_bundle_builds_one_registry_per_display_size(self) -> None:
         images = build_board_tile_images(Mock())
 
-        registries = (images.hand, images.board, images.river, images.river_tsumogiri)
+        registries = (
+            images.hand,
+            images.board,
+            images.river,
+            images.river_tsumogiri,
+        )
         self.assertEqual(4, len({id(registry) for registry in registries}))
 
 
@@ -578,6 +598,9 @@ class GuiBoardStyleTest(unittest.TestCase):
             BOARD_TILE_BACKGROUND, configured["BoardTile.TLabel"]["background"]
         )
         self.assertEqual("#ffffff", BOARD_TILE_BACKGROUND)
+        self.assertEqual(
+            TSUMOGIRI_FACE_COLOR, configured["TsumogiriTile.TLabel"]["background"]
+        )
 
 
 class GuiMeldCaptionTest(unittest.TestCase):
@@ -588,6 +611,158 @@ class GuiMeldCaptionTest(unittest.TestCase):
 
     def test_a_concealed_meld_is_only_the_type(self) -> None:
         self.assertEqual("暗槓", meld_caption(GuiMeldView("暗槓", ("1m",), None, None)))
+
+
+class GuiCenterClearanceTest(unittest.TestCase):
+    """中央情報と河 / 副露が重ならないことを検証する。"""
+
+    def test_offsets_clear_half_the_center_block_plus_a_margin(self) -> None:
+        self.assertEqual(
+            (0, -(50 + CENTER_CLEARANCE)), seat_center_offset("top", 200, 100)
+        )
+        self.assertEqual(
+            (0, 50 + CENTER_CLEARANCE), seat_center_offset("bottom", 200, 100)
+        )
+        self.assertEqual(
+            (-(100 + CENTER_CLEARANCE), 0), seat_center_offset("left", 200, 100)
+        )
+        self.assertEqual(
+            (100 + CENTER_CLEARANCE, 0), seat_center_offset("right", 200, 100)
+        )
+
+    def test_a_taller_center_pushes_the_seats_further_out(self) -> None:
+        _, near = seat_center_offset("bottom", 200, 100)
+        _, far = seat_center_offset("bottom", 200, 160)
+
+        self.assertGreater(far, near)
+
+    def test_an_unknown_position_fails_closed(self) -> None:
+        with self.assertRaises(ValueError):
+            seat_center_offset("middle", 200, 100)
+
+    def test_a_wide_center_never_pushes_seats_off_the_table(self) -> None:
+        """中央情報が横に長くても、左右のseatは卓の中に残す。"""
+        center = board_widget(table_width=900)
+        center.winfo_reqwidth.return_value = 700
+        seat_frames = {
+            position: seat_widget(width=300)
+            for position in ("top", "bottom", "left", "right")
+        }
+
+        offsets = place_seats_around_center(seat_frames, center)
+
+        x, _ = offsets["left"]
+        self.assertGreaterEqual(x, -(900 // 2 - 300))
+
+    def test_every_seat_is_replaced_from_the_measured_center(self) -> None:
+        center = board_widget()
+        seat_frames = {
+            position: seat_widget() for position in ("top", "bottom", "left", "right")
+        }
+
+        offsets = place_seats_around_center(seat_frames, center)
+
+        for position, frame in seat_frames.items():
+            x, y = seat_center_offset(position, 200, 100)
+            frame.place_configure.assert_called_once_with(x=x, y=y)
+            self.assertEqual((x, y), offsets[position])
+
+    def test_rendering_a_board_repositions_the_seats(self) -> None:
+        board = renderer()
+        board.render_seat = Mock()  # type: ignore[method-assign]
+        seat_frames = {
+            position: seat_widget() for position in ("top", "bottom", "left", "right")
+        }
+
+        board.render_board(
+            board_view(),
+            (),
+            seat_frames=seat_frames,
+            center=board_widget(),
+            hand=board_widget(),
+        )
+
+        for frame in seat_frames.values():
+            frame.place_configure.assert_called_once()
+
+
+class GuiBoardSpacingTest(unittest.TestCase):
+    """河牌どうし / 河と副露は離し、同じ組の副露牌は密着させる。"""
+
+    def test_river_tiles_are_spaced_apart(self) -> None:
+        board = renderer()
+        board._ttk.Frame.side_effect = lambda *args, **kwargs: Mock()
+        packed: list[dict[str, Any]] = []
+        board.render_river_tile = (  # type: ignore[method-assign]
+            lambda row, cell: Mock(
+                pack=Mock(side_effect=lambda **kw: packed.append(kw))
+            )
+        )
+
+        board.render_seat(
+            Mock(winfo_children=Mock(return_value=[])),
+            GuiSeatView(
+                position="bottom",
+                label="P1",
+                score=25000,
+                riichi="",
+                melds=(),
+                river=tuple(GuiRiverTile("1m", False, False, None) for _ in range(3)),
+            ),
+        )
+
+        self.assertEqual([RIVER_TILE_GAP] * 3, [kw["padx"] for kw in packed])
+        self.assertGreater(RIVER_TILE_GAP, 0)
+
+    def test_the_river_and_the_melds_are_separated(self) -> None:
+        board = renderer()
+        frame = Mock(winfo_children=Mock(return_value=[]))
+        body = Mock()
+        children: list[Any] = []
+
+        def frame_factory(parent, **_kwargs):
+            widget = Mock()
+            if parent is frame:
+                return body
+            if parent is body:
+                children.append(widget)
+            return widget
+
+        board._ttk.Frame.side_effect = frame_factory
+        board.render_seat(
+            frame,
+            GuiSeatView(
+                position="bottom",
+                label="P1",
+                score=25000,
+                riichi="",
+                melds=(GuiMeldView("ポン", ("1m",), "P2", "1m"),),
+                river=(GuiRiverTile("1m", False, False, None),),
+            ),
+        )
+
+        pads = [
+            call.kwargs["padx"]
+            for child in children
+            for call in child.pack.call_args_list
+        ]
+        # 生成順は副露 -> 河。bottom席では河が中央側(先頭)なので、
+        # 副露は左に、河は右に隙間が付く。
+        self.assertEqual([(MELD_RIVER_GAP, 0), (0, MELD_RIVER_GAP)], pads)
+
+    def test_tiles_inside_one_meld_group_stay_flush(self) -> None:
+        board = renderer()
+
+        board.render_meld(Mock(), GuiMeldView("ポン", ("1m", "1m", "1m"), "P2", "1m"))
+
+        tile_packs = [
+            call.kwargs
+            for call in board._ttk.Label.return_value.pack.call_args_list
+            if call.kwargs.get("side") == "left"
+        ]
+        self.assertTrue(tile_packs)
+        for kwargs in tile_packs:
+            self.assertNotIn("padx", kwargs)
 
 
 class GuiMeldStackingTest(unittest.TestCase):
@@ -617,15 +792,15 @@ class GuiRiverCaptionTest(unittest.TestCase):
     def test_plain_discard_has_no_caption(self) -> None:
         self.assertEqual("", river_caption(GuiRiverTile("1m", False, False, None)))
 
-    def test_tsumogiri_discard_has_no_caption_because_the_tile_is_grayed(self) -> None:
+    def test_tsumogiri_has_no_caption_because_the_tile_itself_is_grayed(
+        self,
+    ) -> None:
         self.assertEqual("", river_caption(GuiRiverTile("1m", True, False, None)))
 
     def test_riichi_declaration_is_marked(self) -> None:
         self.assertEqual("[立]", river_caption(GuiRiverTile("1m", False, True, None)))
 
-    def test_riichi_declaration_tsumogiri_keeps_only_the_riichi_marker(
-        self,
-    ) -> None:
+    def test_riichi_declaration_tsumogiri_keeps_the_riichi_caption(self) -> None:
         self.assertEqual("[立]", river_caption(GuiRiverTile("1m", True, True, None)))
 
     def test_called_discard_appends_the_calling_seat(self) -> None:

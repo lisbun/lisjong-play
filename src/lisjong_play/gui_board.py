@@ -19,20 +19,32 @@ from lisjong_play.tile_images import TileImageRegistry
 
 RIVER_ROW_SIZE = 6
 # 牌画像のsize。600x800のvendored原寸に対し、手牌 約33x44 /
-# 河・副露・ドラ表示牌 約23x30。選択対象の手牌だけを大きく保ち、
+# 河・副露・ドラ表示牌 約22x29。選択対象の手牌だけを大きく保ち、
 # 卓上の牌は同じsizeで揃える。
 # default 1180x860でも minimum 920x700でも、最長の河と副露を同時に
 # 表示して卓からはみ出さない範囲に収める。
 HAND_TILE_IMAGE_SUBSAMPLE = 18
-RIVER_TILE_IMAGE_SUBSAMPLE = 26
+RIVER_TILE_IMAGE_SUBSAMPLE = 27
 BOARD_TILE_IMAGE_SUBSAMPLE = RIVER_TILE_IMAGE_SUBSAMPLE
 
-# ツモ切り牌は彩度を落としたgrayscale画像で示す。text markerを読ませるより、
-# 河を一目で見分けられるオンライン麻雀の表示に寄せる。
-TSUMOGIRI_GRAY_MIX = 0.85
 
-# 中央の卓情報から見た、各seatを置く隙間(px)。実卓と同じく、4人の河が
-# 中央情報を囲む形にするため、seatは卓の端ではなく中央を基準に配置する。
+# 中央の卓情報とseatの間に必ず残す余白(px)。実際の隙間は中央ブロックの
+# 実寸から毎回計算するため、fontやDPIが変わっても牌とtextが重ならない。
+CENTER_CLEARANCE = 4
+
+# 初期配置用の隙間(px)。中央ブロックを描く前の暫定値で、描画のたびに
+# `place_seats_around_center()`が実寸に合わせて更新する。
+# 牌どうしの隙間(px)。同じ組の副露牌は隙間なしで並べ、河牌どうしと
+# 河・副露の間だけを離す。
+# ツモ切り牌は、牌の白地だけをグレーへ置き換えて示す。絵柄の色はそのまま
+# 残すので、どの牌かは読めたまま、ツモ切りだけが一目で分かる。
+TSUMOGIRI_FACE_THRESHOLD = 200
+TSUMOGIRI_FACE_COLOR = "#c2c2c2"
+
+RIVER_TILE_GAP = 1
+RIVER_ROW_GAP = 1
+MELD_RIVER_GAP = 5
+
 CENTER_GAP_X = 135
 CENTER_GAP_Y = 47
 
@@ -55,6 +67,63 @@ SEAT_PART_SIDE = {
     "left": "left",
     "right": "right",
 }
+
+
+def seat_center_offset(position: str, width: int, height: int) -> tuple[int, int]:
+    """中央ブロックの実寸から、seatを置くx / y offsetを求める。
+
+    中央側の辺をanchorしているので、中央ブロックの半分 + 余白だけ外へずらせば
+    牌とtextが重ならない。
+    """
+    gap_x = width // 2 + CENTER_CLEARANCE
+    gap_y = height // 2 + CENTER_CLEARANCE
+    offsets = {
+        "top": (0, -gap_y),
+        "bottom": (0, gap_y),
+        "left": (-gap_x, 0),
+        "right": (gap_x, 0),
+    }
+    try:
+        return offsets[position]
+    except KeyError:
+        raise ValueError(f"unknown seat position: {position!r}") from None
+
+
+def horizontal_center_width(seat_frames: dict[str, Any], center: Any) -> int:
+    """左右のseatを押し出しすぎない範囲へ丸めた、中央ブロックの横幅。
+
+    中央情報が横に長い局面でそのまま外へ押すと、左右のseatが卓の外へ
+    出て牌が切れてしまう。卓に収まる範囲を上限とし、収まらない場合は
+    中央情報側と多少重なることよりも、牌が見えることを優先する。
+    """
+    # 直前に描いたseatの実寸が必要なので、geometryの再計算を先に済ませる。
+    table = center.master
+    table.update_idletasks()
+    width = max(int(center.winfo_reqwidth()), 0)
+    table_width = int(table.winfo_width())
+    if table_width <= 0:
+        return width
+    widest_seat = max(int(frame.winfo_reqwidth()) for frame in seat_frames.values())
+    limit = max(0, (table_width // 2 - widest_seat - CENTER_CLEARANCE) * 2)
+    return min(width, limit)
+
+
+def place_seats_around_center(
+    seat_frames: dict[str, Any], center: Any
+) -> dict[str, tuple[int, int]]:
+    """中央ブロックの実寸に合わせて、各seatのplace offsetを更新する。
+
+    局が進んで中央情報の行数やfontが変わっても、河・副露が中央情報へ
+    かぶらないようにする。
+    """
+    width = horizontal_center_width(seat_frames, center)
+    height = max(int(center.winfo_reqheight()), 0)
+    offsets: dict[str, tuple[int, int]] = {}
+    for position, frame in seat_frames.items():
+        x, y = seat_center_offset(position, width, height)
+        frame.place_configure(x=x, y=y)
+        offsets[position] = (x, y)
+    return offsets
 
 
 def seat_status_side(position: str) -> str:
@@ -113,6 +182,12 @@ def configure_board_styles(style: Any) -> None:
         relief="flat",
     )
     style.configure(
+        "TsumogiriTile.TLabel",
+        background=TSUMOGIRI_FACE_COLOR,
+        padding=0,
+        relief="flat",
+    )
+    style.configure(
         "BoardText.TLabel",
         background=BOARD_FELT_COLOR,
         foreground=BOARD_TEXT_COLOR,
@@ -121,8 +196,8 @@ def configure_board_styles(style: Any) -> None:
         "SeatInfo.TLabel",
         background=SEAT_INFO_COLOR,
         foreground=BOARD_TEXT_COLOR,
-        font=("TkDefaultFont", 9, "bold"),
-        padding=(4, 1),
+        font=("TkDefaultFont", 8, "bold"),
+        padding=(4, 0),
     )
     style.configure(
         "Center.TLabel",
@@ -149,30 +224,6 @@ def load_river_tile_image(tk: Any, path: str) -> Any:
     return tk.PhotoImage(file=path).subsample(RIVER_TILE_IMAGE_SUBSAMPLE)
 
 
-def gray_pixel_rows(image: Any, mix: float = TSUMOGIRI_GRAY_MIX) -> list[list[str]]:
-    """image各pixelを、輝度へ`mix`だけ寄せた`#rrggbb`文字列の2次元listにする。
-
-    Tkの`PhotoImage`はfilterを持たないため、pixelを読み直して彩度を落とす。
-    透過pixelの色は描画されないが、`put()`が不透明にしてしまうため、
-    呼び出し側で透過情報を復元する前提で色だけを返す。
-    """
-    rows: list[list[str]] = []
-    for y in range(image.height()):
-        row: list[str] = []
-        for x in range(image.width()):
-            red, green, blue = _pixel_rgb(image, x, y)
-            luma = 0.299 * red + 0.587 * green + 0.114 * blue
-            row.append(
-                "#%02x%02x%02x"
-                % tuple(
-                    min(255, max(0, round(channel + (luma - channel) * mix)))
-                    for channel in (red, green, blue)
-                )
-            )
-        rows.append(row)
-    return rows
-
-
 def _pixel_rgb(image: Any, x: int, y: int) -> tuple[int, int, int]:
     """`PhotoImage.get()`のtuple / 文字列どちらの戻り値もRGBへ正規化する。"""
     pixel = image.get(x, y)
@@ -182,31 +233,55 @@ def _pixel_rgb(image: Any, x: int, y: int) -> tuple[int, int, int]:
     return red, green, blue
 
 
-def desaturate_tile_image(image: Any) -> Any:
-    """牌画像をその場でgrayscale寄りへ変換し、透過pixelを復元して返す。"""
+def grayed_face_pixel_rows(
+    image: Any,
+    threshold: int = TSUMOGIRI_FACE_THRESHOLD,
+    face_color: str = TSUMOGIRI_FACE_COLOR,
+) -> list[list[str]]:
+    """牌の白地pixelだけを`face_color`へ置き換えた`#rrggbb`の2次元list。
+
+    白に近いpixel(全channelがthreshold以上)だけを塗り替え、数字や絵柄の
+    色pixelはそのまま残す。Tkの`PhotoImage`はfilterを持たないため、
+    pixelを読み直して作る。
+    """
+    rows: list[list[str]] = []
+    for y in range(image.height()):
+        row: list[str] = []
+        for x in range(image.width()):
+            red, green, blue = _pixel_rgb(image, x, y)
+            if min(red, green, blue) >= threshold:
+                row.append(face_color)
+            else:
+                row.append(f"#{red:02x}{green:02x}{blue:02x}")
+        rows.append(row)
+    return rows
+
+
+def gray_tile_face(image: Any) -> Any:
+    """牌画像の白地をその場でグレーへ置き換え、透過pixelを復元して返す。"""
     transparent = [
         (x, y)
         for y in range(image.height())
         for x in range(image.width())
         if image.transparency_get(x, y)
     ]
-    image.put(gray_pixel_rows(image))
+    image.put(grayed_face_pixel_rows(image))
     for x, y in transparent:
         image.transparency_set(x, y, True)
     return image
 
 
 def load_tsumogiri_river_tile_image(tk: Any, path: str) -> Any:
-    """ツモ切り表示用に、河sizeの牌画像を彩度を落として生成する。"""
-    return desaturate_tile_image(load_river_tile_image(tk, path))
+    """ツモ切り表示用に、河sizeの牌画像の白地をグレーにして生成する。"""
+    return gray_tile_face(load_river_tile_image(tk, path))
 
 
 @dataclass(frozen=True)
 class BoardTileImages:
     """用途別の牌画像registry束。
 
-    `TileImageRegistry`はfactory単位のcacheなので、表示の種類ごとに別registryを
-    持てば、同じtile labelでも種類ごとに1つのcache済みimage objectへ解決される。
+    `TileImageRegistry`はfactory単位のcacheなので、表示sizeごとに別registryを
+    持てば、同じtile labelでもsizeごとに1つのcache済みimage objectへ解決される。
     この束をapplication lifetime中保持することが、Tkの`PhotoImage` reference
     を保つ責務も兼ねる。
     """
@@ -218,7 +293,7 @@ class BoardTileImages:
 
 
 def build_board_tile_images(tk: Any) -> BoardTileImages:
-    """手牌 / 卓上 / 河 / ツモ切り河の4registryをまとめて生成する。"""
+    """手牌 / 卓上(副露・ドラ表示牌) / 河 / ツモ切り河の4registryを生成する。"""
     return BoardTileImages(
         hand=TileImageRegistry(lambda path: load_tile_image(tk, path)),
         board=TileImageRegistry(lambda path: load_board_tile_image(tk, path)),
@@ -231,7 +306,9 @@ def build_board_tile_images(tk: Any) -> BoardTileImages:
 
 # GUI専用の河凡例。CLI rendererのtext river(`*`)とは表記が異なるため、
 # `renderer.RIVER_LEGEND`を共有しない。
-GUI_RIVER_LEGEND = "河の表記: 灰色 = ツモ切り / [立] = 立直宣言牌 / →Pn = 鳴かれた牌"
+GUI_RIVER_LEGEND = (
+    "河の表記: 灰色の牌 = ツモ切り / [立] = 立直宣言牌 / →Pn = 鳴かれた牌"
+)
 
 
 def meld_caption(meld: GuiMeldView) -> str:
@@ -246,9 +323,9 @@ def meld_caption(meld: GuiMeldView) -> str:
 
 
 def river_caption(cell: GuiRiverTile) -> str:
-    """河牌画像へ添える、立直宣言 / 鳴かれた牌のtext marker。
+    """河牌画像の下へ添える、立直宣言 / 鳴かれた牌のtext marker。
 
-    ツモ切りは彩度を落とした牌画像自体で示すため、captionへは出さない。
+    ツモ切りは牌の白地をグレーにして示すため、ここには出さない。
     """
     caption = "[立]" if cell.is_riichi_declaration else ""
     if cell.called_by is not None:
@@ -336,6 +413,9 @@ class GuiBoardRenderer:
             center, text=f"判断: {board.decision_label}", style="BoardText.TLabel"
         ).pack()
 
+        # 中央情報を組み立てたあとで、実寸に合わせてseatを置き直す。
+        place_seats_around_center(seat_frames, center)
+
         clear_frame(hand)
         tiles = self._ttk.Frame(hand)
         tiles.pack(anchor="center")
@@ -379,8 +459,11 @@ class GuiBoardRenderer:
             if seat_melds_come_first(seat.position)
             else (river_box, melds_box)
         )
-        for box in boxes:
-            box.pack(side="left", anchor="n")
+        # 河と副露は隣り合うので、間だけ空ける。
+        for box, padx in zip(
+            boxes, ((0, MELD_RIVER_GAP), (MELD_RIVER_GAP, 0)), strict=True
+        ):
+            box.pack(side="left", anchor="n", padx=padx)
 
         if seat.melds:
             for meld in seat.melds:
@@ -391,9 +474,11 @@ class GuiBoardRenderer:
         else:
             for start in range(0, len(seat.river), RIVER_ROW_SIZE):
                 row = self._ttk.Frame(river_box, style="Seat.TFrame")
-                row.pack(anchor="w")
+                row.pack(anchor="w", pady=RIVER_ROW_GAP)
                 for cell in seat.river[start : start + RIVER_ROW_SIZE]:
-                    self.render_river_tile(row, cell).pack(side="left")
+                    self.render_river_tile(row, cell).pack(
+                        side="left", padx=RIVER_TILE_GAP
+                    )
 
     def render_meld(self, parent: Any, meld: GuiMeldView) -> None:
         """副露を1組ずつ縦に積む。複数組でも横幅を増やさない。"""
@@ -440,7 +525,7 @@ class GuiBoardRenderer:
         )
 
     def river_tile_image(self, tile_label: str, *, is_tsumogiri: bool = False) -> Any:
-        """河牌画像。ツモ切りだけ彩度を落としたregistryから解決する。"""
+        """河牌画像。ツモ切りは白地をグレーにしたregistryから解決する。"""
         registry = (
             self._tile_images.river_tsumogiri
             if is_tsumogiri
@@ -451,10 +536,11 @@ class GuiBoardRenderer:
     def river_tile_image_label(
         self, parent: Any, tile_label: str, *, is_tsumogiri: bool = False
     ) -> Any:
+        """河牌のlabel。ツモ切りは牌の白地も背景もグレーで揃える。"""
         return self._ttk.Label(
             parent,
             image=self.river_tile_image(tile_label, is_tsumogiri=is_tsumogiri),
-            style="BoardTile.TLabel",
+            style="TsumogiriTile.TLabel" if is_tsumogiri else "BoardTile.TLabel",
         )
 
     def tile_control(

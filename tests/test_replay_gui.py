@@ -58,6 +58,10 @@ class _FakeRoot:
 def _widget(*_args, **_kwargs):
     widget = Mock()
     widget.winfo_children.return_value = []
+    # 中央ブロックの実寸からseat位置を計算するため、実widgetと同じくintを返す。
+    widget.winfo_reqwidth.return_value = 200
+    widget.winfo_reqheight.return_value = 100
+    widget.master.winfo_width.return_value = 1000
     return widget
 
 
