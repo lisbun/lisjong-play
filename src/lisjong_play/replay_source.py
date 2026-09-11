@@ -29,6 +29,7 @@ from lisjong.policy_contract import (
     PonAction,
     RiichiAction,
     RonAction,
+    Seat,
     TsumoAction,
 )
 
@@ -114,11 +115,14 @@ class ReplayLoadError(RuntimeError):
 
 
 def _seat_index(seat: Any) -> int:
-    """recorded seat valueを0..3のfixed seat indexへ正規化する。"""
-    try:
-        index = int(seat)
-    except TypeError, ValueError:
+    """strict loaderが復元済みのtyped `Seat`を0..3のfixed seat indexへ変換する。
+
+    ここはArena / lisjongのtyped contractとして既に検証済みのvalueだけを扱う。
+    raw objective-event JSONのseat scalarは`_raw_seat_index()`で別に検証する。
+    """
+    if not isinstance(seat, Seat):
         raise ReplayLoadError(f"record contains an unusable seat value: {seat!r}")
+    index = int(seat)
     if not 0 <= index < len(_SEAT_NAMES):
         raise ReplayLoadError(f"record contains an out-of-range seat: {index}")
     return index
@@ -129,8 +133,11 @@ def seat_name(seat: Any) -> str:
     return _SEAT_NAMES[_seat_index(seat)]
 
 
-def _seat_round_label(seat: Any, dealer_seat: Any) -> str:
-    index = _seat_index(seat)
+def _seat_label_for_index(index: int) -> str:
+    return _SEAT_NAMES[index]
+
+
+def _seat_round_label(index: int, dealer_seat: Any) -> str:
     dealer = _seat_index(dealer_seat)
     wind = _SEAT_WIND_LABELS[(index - dealer) % len(_SEAT_NAMES)]
     return f"{_SEAT_NAMES[index]}（{wind}）"
@@ -378,7 +385,7 @@ def _decoded_events(game_trace: Any) -> tuple[dict[str, Any], ...]:
         if type(payload) is not dict:
             raise ReplayLoadError("recorded objective event must be a JSON object")
         event_type = payload.get("type")
-        if event_type not in _KNOWN_EVENT_TYPES:
+        if type(event_type) is not str or event_type not in _KNOWN_EVENT_TYPES:
             raise ReplayLoadError(
                 f"record contains an unsupported objective event type: {event_type!r}"
             )
@@ -393,34 +400,68 @@ def _required(payload: dict[str, Any], key: str, event_type: str) -> Any:
         raise ReplayLoadError(f"recorded {event_type} event is missing {key!r}")
 
 
-def _four_ints(value: Any, event_type: str, key: str) -> tuple[int, int, int, int]:
-    try:
-        values = tuple(int(item) for item in value)
-    except TypeError, ValueError:
-        raise ReplayLoadError(f"recorded {event_type} event has a malformed {key!r}")
-    if len(values) != len(_SEAT_NAMES):
-        raise ReplayLoadError(
-            f"recorded {event_type} event {key!r} must contain four values"
-        )
-    return values
+def _raw_int(value: Any, context: str) -> int:
+    """raw objective-event JSONのinteger fieldを暗黙変換なしで検証する。
+
+    `GameTraceEvent`が保証するのはevent全体がvalid JSON objectであることまでで、
+    個々のMJAI fieldの型は固定されていない。`bool` / `float` / `str`をintへ
+    coerceせず、JSON integerだけを受理する(`type(True) is int`はFalseなので
+    boolもここでrejectされる)。
+    """
+    if type(value) is not int:
+        raise ReplayLoadError(f"{context} must be a JSON integer, got {value!r}")
+    return value
+
+
+def _raw_str(value: Any, context: str) -> str:
+    if type(value) is not str:
+        raise ReplayLoadError(f"{context} must be a JSON string, got {value!r}")
+    return value
+
+
+def _raw_seat_index(value: Any, context: str) -> int:
+    """raw objective-event JSONのseat scalarを検証して0..3 indexへ。"""
+    index = _raw_int(value, context)
+    if not 0 <= index < len(_SEAT_NAMES):
+        raise ReplayLoadError(f"{context} is not a seat in 0..3, got {index}")
+    return index
+
+
+def _raw_four_ints(value: Any, event_type: str, key: str) -> tuple[int, ...]:
+    """raw objective-event JSONの4要素integer arrayを検証する。"""
+    context = f"recorded {event_type} event {key!r}"
+    if type(value) is not list:
+        raise ReplayLoadError(f"{context} must be a JSON array, got {value!r}")
+    if len(value) != len(_SEAT_NAMES):
+        raise ReplayLoadError(f"{context} must contain four values")
+    return tuple(
+        _raw_int(item, f"{context}[{index}]") for index, item in enumerate(value)
+    )
 
 
 def _kyoku_identity(payload: dict[str, Any]) -> tuple[str, int, int, int]:
     """start_kyoku eventから、decision側と突き合わせ可能なround identityを作る。"""
-    bakaze = _required(payload, "bakaze", "start_kyoku")
+    bakaze = _raw_str(
+        _required(payload, "bakaze", "start_kyoku"),
+        "recorded start_kyoku event 'bakaze'",
+    )
     wind = _BAKAZE_WIND_VALUES.get(bakaze)
     if wind is None:
         raise ReplayLoadError(f"record contains an unsupported bakaze: {bakaze!r}")
-    try:
-        hand_number = int(_required(payload, "kyoku", "start_kyoku"))
-        honba = int(_required(payload, "honba", "start_kyoku"))
-    except TypeError, ValueError:
-        raise ReplayLoadError("recorded start_kyoku event has a malformed round number")
     return (
         wind,
-        hand_number,
-        honba,
-        _seat_index(_required(payload, "oya", "start_kyoku")),
+        _raw_int(
+            _required(payload, "kyoku", "start_kyoku"),
+            "recorded start_kyoku event 'kyoku'",
+        ),
+        _raw_int(
+            _required(payload, "honba", "start_kyoku"),
+            "recorded start_kyoku event 'honba'",
+        ),
+        _raw_seat_index(
+            _required(payload, "oya", "start_kyoku"),
+            "recorded start_kyoku event 'oya'",
+        ),
     )
 
 
@@ -452,20 +493,28 @@ def _outcome_lines(terminals: Sequence[dict[str, Any]]) -> list[str]:
     for payload in terminals:
         event_type = payload["type"]
         if event_type == "hora":
-            actor = _required(payload, "actor", "hora")
-            target = _required(payload, "target", "hora")
-            is_tsumo = _seat_index(actor) == _seat_index(target)
+            actor = _raw_seat_index(
+                _required(payload, "actor", "hora"), "recorded hora event 'actor'"
+            )
+            target = _raw_seat_index(
+                _required(payload, "target", "hora"), "recorded hora event 'target'"
+            )
+            is_tsumo = actor == target
             method = "ツモ" if is_tsumo else "ロン"
-            lines.append(f"結果: 和了 {seat_name(actor)}（{method}）")
+            lines.append(f"結果: 和了 {_seat_label_for_index(actor)}（{method}）")
             if not is_tsumo:
-                lines.append(f"放銃: {seat_name(target)}")
+                lines.append(f"放銃: {_seat_label_for_index(target)}")
         else:
             reason = payload.get("reason")
-            suffix = "" if reason is None else f" ({reason})"
+            suffix = (
+                ""
+                if reason is None
+                else f" ({_raw_str(reason, "recorded ryukyoku event 'reason'")})"
+            )
             lines.append(f"結果: 流局{suffix}")
         lines.append(
             _deltas_line(
-                _four_ints(
+                _raw_four_ints(
                     _required(payload, "deltas", event_type), event_type, "deltas"
                 )
             )
@@ -490,7 +539,7 @@ def _round_results(
             segments.append(
                 (
                     _kyoku_identity(payload),
-                    _four_ints(
+                    _raw_four_ints(
                         _required(payload, "scores", "start_kyoku"),
                         "start_kyoku",
                         "scores",
@@ -523,8 +572,10 @@ def _round_results(
 
 def _final_result_text(result: Any) -> str:
     """recorded `LocalGameResult`のscores / ranksだけから半荘結果を作る。"""
-    scores = _four_ints(result.scores, "result", "scores")
-    ranks = _four_ints(result.ranks, "result", "ranks")
+    # `LocalGameResult`はArenaのtyped contractとして4 int scores / ranksを
+    # construction時に検証済みなので、ここでraw JSON扱いの再検証はしない。
+    scores = tuple(result.scores)
+    ranks = tuple(result.ranks)
     if sorted(ranks) != [1, 2, 3, 4]:
         raise ReplayLoadError("recorded final ranks are not a complete 1..4 ordering")
     lines = ["=== 半荘結果 ==="]
@@ -637,7 +688,7 @@ def build_timeline(record: Any) -> ReplayTimeline:
 
 def _default_loader(path: str | Path) -> Any:
     """Arenaのsupported strict loaderだけをrecord入口として使う。"""
-    from lisjong_arena.durable_local_game_record import load_local_game_record
+    from lisjong_arena import load_local_game_record
 
     return load_local_game_record(path)
 

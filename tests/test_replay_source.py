@@ -31,6 +31,7 @@ from lisjong_play.replay_source import (
     _tile_sort_key,
     build_timeline,
     load_replay_timeline,
+    seat_name,
     tile_label,
 )
 from lisjong_play.tile_images import TILE_ASSET_FILENAMES
@@ -375,6 +376,174 @@ class ReplayRecordConsistencyTest(unittest.TestCase):
         with self.assertRaises(ReplayLoadError) as caught:
             build_timeline(self._record(inspection))
         self.assertIn("does not match its decisions", str(caught.exception))
+
+
+class ReplayRawEventTypeStrictnessTest(unittest.TestCase):
+    """objective GameTrace fieldを暗黙のint()変換で受理しないこと。
+
+    `GameTraceEvent`が保証するのはeventがvalid JSON objectであるところまでで、
+    個々のMJAI fieldの型はGameTrace contractでは固定されていない。bool / float /
+    string integerをintへcoerceせず、`ReplayLoadError`でfail closedする。
+    """
+
+    class _Provenance:
+        lisjong_arena_revision = "a"
+        lisjong_revision = "b"
+        lisjong_engine_revision = "c"
+
+    def _record(self, inspection):
+        class _Record:
+            record_identity = "d" * 64
+            policy_identities = ("p0", "p1", "p2", "p3")
+            provenance = ReplayRawEventTypeStrictnessTest._Provenance()
+
+        record = _Record()
+        record.inspection = inspection
+        return record
+
+    def _rejects(self, index: int, payload: dict) -> str:
+        inspection = fixtures.inspection()
+        events = list(inspection.game_trace.events)
+        events[index] = GameTraceEvent(
+            sequence=index, event=json.dumps(payload, sort_keys=True)
+        )
+        trace = GameTrace(
+            seed=inspection.game_trace.seed,
+            game_mode=inspection.game_trace.game_mode,
+            events=tuple(events),
+        )
+        with self.assertRaises(ReplayLoadError) as caught:
+            build_timeline(self._record(replace(inspection, game_trace=trace)))
+        return str(caught.exception)
+
+    def _start_kyoku(self, **overrides) -> dict:
+        payload = {
+            "type": "start_kyoku",
+            "bakaze": "E",
+            "kyoku": 1,
+            "honba": 0,
+            "oya": 0,
+            "kyotaku": 0,
+            "dora_marker": "5m",
+            "scores": [25000, 25000, 25000, 25000],
+        }
+        payload.update(overrides)
+        return payload
+
+    def _hora(self, **overrides) -> dict:
+        payload = {
+            "type": "hora",
+            "actor": 1,
+            "target": 2,
+            "deltas": [1000, 5000, -3000, -3000],
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_string_integer_oya_is_rejected(self) -> None:
+        message = self._rejects(1, self._start_kyoku(oya="0"))
+        self.assertIn("'oya'", message)
+        self.assertIn("JSON integer", message)
+
+    def test_float_kyoku_is_rejected(self) -> None:
+        message = self._rejects(1, self._start_kyoku(kyoku=1.0))
+        self.assertIn("'kyoku'", message)
+        self.assertIn("JSON integer", message)
+
+    def test_fractional_float_kyoku_is_rejected(self) -> None:
+        self.assertIn("JSON integer", self._rejects(1, self._start_kyoku(kyoku=1.9)))
+
+    def test_bool_honba_is_rejected(self) -> None:
+        message = self._rejects(1, self._start_kyoku(honba=True))
+        self.assertIn("'honba'", message)
+        self.assertIn("JSON integer", message)
+
+    def test_bool_in_scores_is_rejected(self) -> None:
+        message = self._rejects(
+            1, self._start_kyoku(scores=[True, 25000, 25000, 25000])
+        )
+        self.assertIn("'scores'[0]", message)
+        self.assertIn("JSON integer", message)
+
+    def test_float_in_scores_is_rejected(self) -> None:
+        message = self._rejects(
+            1, self._start_kyoku(scores=[25000.0, 25000, 25000, 25000])
+        )
+        self.assertIn("'scores'[0]", message)
+        self.assertIn("JSON integer", message)
+
+    def test_string_integer_in_deltas_is_rejected(self) -> None:
+        message = self._rejects(7, self._hora(deltas=["1000", 5000, -3000, -3000]))
+        self.assertIn("'deltas'[0]", message)
+        self.assertIn("JSON integer", message)
+
+    def test_bool_hora_actor_is_rejected(self) -> None:
+        message = self._rejects(7, self._hora(actor=True))
+        self.assertIn("'actor'", message)
+        self.assertIn("JSON integer", message)
+
+    def test_string_integer_hora_target_is_rejected(self) -> None:
+        message = self._rejects(7, self._hora(target="2"))
+        self.assertIn("'target'", message)
+        self.assertIn("JSON integer", message)
+
+    def test_out_of_range_seat_is_rejected(self) -> None:
+        self.assertIn("seat in 0..3", self._rejects(7, self._hora(actor=4)))
+
+    def test_non_array_scores_is_rejected(self) -> None:
+        message = self._rejects(1, self._start_kyoku(scores=25000))
+        self.assertIn("'scores'", message)
+        self.assertIn("JSON array", message)
+
+    def test_wrong_length_scores_is_rejected(self) -> None:
+        message = self._rejects(1, self._start_kyoku(scores=[25000, 25000, 25000]))
+        self.assertIn("four values", message)
+
+    def test_non_string_bakaze_is_rejected(self) -> None:
+        message = self._rejects(1, self._start_kyoku(bakaze=0))
+        self.assertIn("'bakaze'", message)
+        self.assertIn("JSON string", message)
+
+    def test_non_string_ryukyoku_reason_is_rejected(self) -> None:
+        message = self._rejects(
+            3, {"type": "ryukyoku", "reason": 0, "deltas": [0, 0, 0, 0]}
+        )
+        self.assertIn("'reason'", message)
+        self.assertIn("JSON string", message)
+
+    def test_non_string_event_type_is_rejected(self) -> None:
+        message = self._rejects(0, {"type": 1})
+        self.assertIn("unsupported objective event type", message)
+
+    def test_well_formed_integers_are_still_accepted(self) -> None:
+        """strict化がvalid recordのnavigation semanticsを変えないこと。"""
+        inspection = fixtures.inspection()
+        timeline = build_timeline(self._record(inspection))
+        self.assertEqual(4, len(timeline.frames))
+        self.assertEqual(
+            ["東1局 0本場", "東2局 0本場"], [item.label for item in timeline.rounds]
+        )
+
+
+class ReplayTypedContractBoundaryTest(unittest.TestCase):
+    """typed contractとして復元済みのvalueは、raw JSONとして再検証しない。"""
+
+    def test_typed_seat_values_are_required_to_be_seats(self) -> None:
+        for value in (0, True, "0", 1.0, None):
+            with self.subTest(value=value):
+                with self.assertRaises(ReplayLoadError):
+                    seat_name(value)
+
+    def test_restored_seat_enum_is_accepted(self) -> None:
+        self.assertEqual("P1", seat_name(Seat.SEAT_0))
+        self.assertEqual("P4", seat_name(Seat.SEAT_3))
+
+    def test_final_result_uses_the_typed_local_game_result(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "record"
+            save_fixture_record(path)
+            timeline = load_replay_timeline(path)
+        self.assertIn("1位 P2: 31000点", timeline.final_result_text)
 
 
 class ReplayLabelVocabularyTest(unittest.TestCase):
