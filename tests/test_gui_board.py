@@ -1,9 +1,18 @@
 """live Human PlayとReplayが共有するboard rendererのtest。"""
 
 import unittest
+from typing import Any
 from unittest.mock import Mock
 
-from lisjong_play.gui_board import GuiBoardRenderer, river_caption
+from lisjong_play.gui_board import (
+    RIVER_ROW_SIZE,
+    RIVER_TILE_IMAGE_SUBSAMPLE,
+    TILE_IMAGE_SUBSAMPLE,
+    GuiBoardRenderer,
+    load_river_tile_image,
+    load_tile_image,
+    river_caption,
+)
 from lisjong_play.gui_model import (
     ActionStyle,
     GuiActionView,
@@ -12,6 +21,7 @@ from lisjong_play.gui_model import (
     GuiRiverTile,
     GuiSeatView,
 )
+from lisjong_play.tile_images import TileImageRegistry
 
 
 def action_view(
@@ -56,24 +66,50 @@ def board_view(
 
 
 def renderer(*, on_select_action=None) -> GuiBoardRenderer:
-    return GuiBoardRenderer(Mock(), Mock(), on_select_action=on_select_action)
+    return GuiBoardRenderer(Mock(), Mock(), Mock(), on_select_action=on_select_action)
 
 
 class GuiBoardRendererContractTest(unittest.TestCase):
     def test_rejects_a_non_callable_selection_handler(self) -> None:
         with self.assertRaises(TypeError):
-            GuiBoardRenderer(Mock(), Mock(), on_select_action="not callable")
+            GuiBoardRenderer(Mock(), Mock(), Mock(), on_select_action="not callable")
 
 
 class GuiTileImageRegistrySharingTest(unittest.TestCase):
-    """河 / 副露 / ドラ表示牌が手牌と同じtile image registryを利用することを検証する。"""
+    """副露 / ドラ表示牌が手牌と同じregistryを、河だけが河専用registryを使うことを検証する。"""
 
-    def test_river_tile_looks_up_its_image_from_the_shared_registry(self) -> None:
+    def test_river_tile_looks_up_its_image_from_the_river_registry(self) -> None:
         board = renderer()
 
         board.render_river_tile(Mock(), GuiRiverTile("5pr", False, False, None))
 
-        board._tile_images.get.assert_called_once_with("5pr")
+        board._river_tile_images.get.assert_called_once_with("5pr")
+        board._tile_images.get.assert_not_called()
+
+    def test_river_tile_label_uses_the_river_sized_image(self) -> None:
+        board = renderer()
+
+        board.render_river_tile(Mock(), GuiRiverTile("5pr", False, False, None))
+
+        _, kwargs = board._ttk.Label.call_args_list[0]
+        self.assertIs(kwargs["image"], board._river_tile_images.get.return_value)
+
+    def test_same_tile_label_resolves_to_distinct_hand_and_river_images(self) -> None:
+        """同じtile labelでも、size別registryは別のcache objectを返す。"""
+        hand_images = TileImageRegistry(lambda path: ("hand", path))
+        river_images = TileImageRegistry(lambda path: ("river", path))
+        board = GuiBoardRenderer(Mock(), hand_images, river_images)
+
+        board.tile_control(Mock(), "1m", None)
+        board.render_river_tile(Mock(), GuiRiverTile("1m", False, False, None))
+
+        hand_image = board.tile_image("1m")
+        river_image = board.river_tile_image("1m")
+        self.assertEqual("hand", hand_image[0])
+        self.assertEqual("river", river_image[0])
+        self.assertIsNot(hand_image, river_image)
+        self.assertIs(hand_image, board.tile_image("1m"))
+        self.assertIs(river_image, board.river_tile_image("1m"))
 
     def test_meld_tiles_look_up_their_images_from_the_shared_registry(self) -> None:
         board = renderer()
@@ -84,6 +120,7 @@ class GuiTileImageRegistrySharingTest(unittest.TestCase):
             [("1m",), ("1m",), ("1m",)],
             [call.args for call in board._tile_images.get.call_args_list],
         )
+        board._river_tile_images.get.assert_not_called()
 
     def test_meld_caption_shows_the_called_tile_when_present(self) -> None:
         board = renderer()
@@ -131,6 +168,68 @@ class GuiTileImageRegistrySharingTest(unittest.TestCase):
             [("東",), ("5sr",)],
             [call.args for call in board._tile_images.get.call_args_list],
         )
+
+
+class GuiRiverLayoutTest(unittest.TestCase):
+    def test_a_long_river_keeps_six_tiles_per_row(self) -> None:
+        board = renderer()
+        board._ttk.Frame.side_effect = lambda *args, **kwargs: Mock()
+        rendered: list[tuple[Any, str]] = []
+        board.render_river_tile = (  # type: ignore[method-assign]
+            lambda row, cell: rendered.append((row, cell.tile)) or Mock()
+        )
+        river = tuple(
+            GuiRiverTile(f"{index % 9 + 1}m", False, False, None) for index in range(25)
+        )
+
+        board.render_seat(
+            Mock(winfo_children=Mock(return_value=[])),
+            GuiSeatView(
+                position="bottom",
+                label="P1",
+                score=25000,
+                riichi="",
+                melds=(),
+                river=river,
+            ),
+        )
+
+        rows: dict[int, int] = {}
+        for row, _ in rendered:
+            rows[id(row)] = rows.get(id(row), 0) + 1
+        counts = list(rows.values())
+        self.assertEqual(len(river), sum(counts))
+        self.assertEqual(5, len(counts))
+        self.assertEqual([RIVER_ROW_SIZE] * 4 + [1], counts)
+
+
+class GuiTileImageScaleTest(unittest.TestCase):
+    """河牌が手牌より小さいsubsample scaleで生成されることを検証する。"""
+
+    def test_river_scale_is_smaller_than_the_hand_scale(self) -> None:
+        self.assertGreater(RIVER_TILE_IMAGE_SUBSAMPLE, TILE_IMAGE_SUBSAMPLE)
+
+    def test_hand_image_factory_uses_the_normal_subsample(self) -> None:
+        tk = Mock()
+
+        image = load_tile_image(tk, "1m.png")
+
+        tk.PhotoImage.assert_called_once_with(file="1m.png")
+        tk.PhotoImage.return_value.subsample.assert_called_once_with(
+            TILE_IMAGE_SUBSAMPLE
+        )
+        self.assertIs(image, tk.PhotoImage.return_value.subsample.return_value)
+
+    def test_river_image_factory_uses_the_river_subsample(self) -> None:
+        tk = Mock()
+
+        image = load_river_tile_image(tk, "1m.png")
+
+        tk.PhotoImage.assert_called_once_with(file="1m.png")
+        tk.PhotoImage.return_value.subsample.assert_called_once_with(
+            RIVER_TILE_IMAGE_SUBSAMPLE
+        )
+        self.assertIs(image, tk.PhotoImage.return_value.subsample.return_value)
 
 
 class GuiTileControlTest(unittest.TestCase):

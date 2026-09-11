@@ -12,6 +12,7 @@ from lisjong_play.gui_board import (
     POSITION_GRID,
     GuiBoardRenderer,
     clear_frame,
+    load_river_tile_image,
     load_tile_image,
 )
 from lisjong_play.gui_bridge import (
@@ -150,8 +151,14 @@ class _TkGuiApplication:
         self._worker: threading.Thread | None = None
         self._active_decision_id: int | None = None
         self._tile_images = TileImageRegistry(lambda path: load_tile_image(tk, path))
+        self._river_tile_images = TileImageRegistry(
+            lambda path: load_river_tile_image(tk, path)
+        )
         self._board_renderer = GuiBoardRenderer(
-            ttk, self._tile_images, on_select_action=self._choose_action
+            ttk,
+            self._tile_images,
+            self._river_tile_images,
+            on_select_action=self._choose_action,
         )
 
         root.title("lisjong-play GUI prototype")

@@ -17,6 +17,7 @@ from lisjong_play.gui_model import (
 
 RIVER_ROW_SIZE = 6
 TILE_IMAGE_SUBSAMPLE = 12
+RIVER_TILE_IMAGE_SUBSAMPLE = 18
 
 POSITION_GRID = {
     "top": (0, 1),
@@ -27,8 +28,17 @@ POSITION_GRID = {
 
 
 def load_tile_image(tk: Any, path: str) -> Any:
-    """vendored牌画像を原寸からGUI表示向けの縮小sizeへ変換する。"""
+    """vendored牌画像を原寸から手牌 / 副露 / ドラ表示牌向けの縮小sizeへ変換する。"""
     return tk.PhotoImage(file=path).subsample(TILE_IMAGE_SUBSAMPLE)
+
+
+def load_river_tile_image(tk: Any, path: str) -> Any:
+    """vendored牌画像を河専用のより小さい表示sizeへ変換する。
+
+    最大4row x 6枚の河をseat frame内へ収めるため、手牌より小さいscaleを使う。
+    手牌の操作性へ影響させないよう、河以外はこのsizeを使わない。
+    """
+    return tk.PhotoImage(file=path).subsample(RIVER_TILE_IMAGE_SUBSAMPLE)
 
 
 def river_caption(cell: GuiRiverTile) -> str:
@@ -78,12 +88,17 @@ class GuiBoardRenderer:
 
     `on_select_action`はlive Human decisionだけが渡す。Replayのように選択が
     存在しない表示では`None`のままにし、legal打牌buttonを生成しない。
+
+    牌画像は表示sizeごとに別registryを受け取る。`tile_images`は手牌 / 副露 /
+    ドラ表示牌、`river_tile_images`は河専用で、同じtile labelでもcache
+    objectはsizeごとに分離される。
     """
 
     def __init__(
         self,
         ttk: Any,
         tile_images: Any,
+        river_tile_images: Any,
         *,
         on_select_action: Callable[[int], None] | None = None,
     ) -> None:
@@ -91,6 +106,7 @@ class GuiBoardRenderer:
             raise TypeError("on_select_action must be callable or None")
         self._ttk = ttk
         self._tile_images = tile_images
+        self._river_tile_images = river_tile_images
         self._on_select_action = on_select_action
 
     def render_board(
@@ -190,7 +206,7 @@ class GuiBoardRenderer:
 
     def render_river_tile(self, parent: Any, cell: GuiRiverTile) -> Any:
         box = self._ttk.Frame(parent)
-        self.tile_image_label(box, cell.tile).pack()
+        self.river_tile_image_label(box, cell.tile).pack()
         caption = river_caption(cell)
         if caption:
             self._ttk.Label(box, text=caption, font=("TkDefaultFont", 8)).pack()
@@ -202,6 +218,16 @@ class GuiBoardRenderer:
     def tile_image_label(self, parent: Any, tile_label: str) -> Any:
         return self._ttk.Label(
             parent, image=self.tile_image(tile_label), style="TileImage.TLabel"
+        )
+
+    def river_tile_image(self, tile_label: str) -> Any:
+        return self._river_tile_images.get(tile_label)
+
+    def river_tile_image_label(self, parent: Any, tile_label: str) -> Any:
+        return self._ttk.Label(
+            parent,
+            image=self.river_tile_image(tile_label),
+            style="TileImage.TLabel",
         )
 
     def tile_control(

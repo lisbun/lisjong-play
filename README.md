@@ -70,6 +70,8 @@ The viewer never recomputes legality, call priority, scoring, yaku / fu, round p
 
 The GUI's tile images are vendored PNGs from [FluffyStuff/riichi-mahjong-tiles](https://github.com/FluffyStuff/riichi-mahjong-tiles) (public domain / CC0 1.0), bundled as package resources under `src/lisjong_play/assets/tiles/` and looked up by canonical tile label through `lisjong_play.tile_images`. Lookup does not depend on the process working directory, and no network access is required at runtime. See `src/lisjong_play/assets/tiles/THIRD_PARTY_NOTICE.md` for the exact source revision and license provenance; that CC0 provenance applies only to the vendored image assets and is separate from this repository's own MIT license.
 
+The same assets are displayed at two sizes: hand, drawn-tile, meld, and dora-indicator tiles keep the normal size, while river tiles use a smaller river-only size so that a long river of six tiles per row stays inside its seat frame at the default window size. Each size has its own `TileImageRegistry`, so a tile label resolves to one cached image object per size and the Tk `PhotoImage` references stay alive for the application lifetime. Live Human Play and the Replay Viewer share this behavior through the same board renderer.
+
 The table composition is informed by [MJX's observation visualizer](https://github.com/mjx-project/mjx/tree/master/mjx/visualizer), but no MJX code, font, or artwork is copied or bundled.
 
 Human decisions use the engine's player-safe `SeatObservation` and original legal `ActionDescriptor` values directly.
