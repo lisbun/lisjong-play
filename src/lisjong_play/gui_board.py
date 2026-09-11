@@ -17,8 +17,6 @@ from lisjong_play.gui_model import (
 
 RIVER_ROW_SIZE = 6
 # 600x800 assets -> about 27x36 for hand / meld / dora, 15x20 for river.
-# Repeated Windows manual validation showed that 33x44 / 22x29 still clipped
-# second and later river rows inside the bounded table layout.
 TILE_IMAGE_SUBSAMPLE = 22
 RIVER_TILE_IMAGE_SUBSAMPLE = 40
 
@@ -29,17 +27,24 @@ POSITION_GRID = {
     "bottom": (2, 1),
 }
 
+# Live / Replay双方で、卓を3x3の巨大セルへ分割せず、緑背景上に
+# content-sized seat cardを浮かせるためのanchor。
+TABLE_PLACE = {
+    "top": (0.50, 0.02, "n"),
+    "left": (0.02, 0.50, "w"),
+    "right": (0.98, 0.50, "e"),
+    "bottom": (0.50, 0.98, "s"),
+}
+CENTER_PLACE = (0.50, 0.50, "center")
+
 
 def load_tile_image(tk: Any, path: str) -> Any:
-    """vendored牌画像を原寸から手牌 / 副露 / ドラ表示牌向けの縮小sizeへ変換する。"""
+    """vendored牌画像を手牌 / 副露 / ドラ表示牌向けsizeへ縮小する。"""
     return tk.PhotoImage(file=path).subsample(TILE_IMAGE_SUBSAMPLE)
 
 
 def load_river_tile_image(tk: Any, path: str) -> Any:
-    """vendored牌画像を河専用のより小さい表示sizeへ変換する。
-
-    最大4row x 6枚の河をseat frame内へ収めるため、手牌より小さいscaleを使う。
-    """
+    """vendored牌画像を河専用の小さい表示sizeへ縮小する。"""
     return tk.PhotoImage(file=path).subsample(RIVER_TILE_IMAGE_SUBSAMPLE)
 
 
@@ -56,11 +61,7 @@ def river_caption(cell: GuiRiverTile) -> str:
 def hand_discard_actions(
     actions: Sequence[GuiActionView],
 ) -> dict[str, GuiActionView]:
-    """表示中の concealed-hand tile label → 対応する打牌 GuiActionView。
-
-    同一tile_labelの打牌optionはengine projectionで常に1件へcollapseされる
-    ため、同じ表示牌が複数あってもsame option_indexへ安全に対応付く。
-    """
+    """表示中の concealed-hand tile label → 対応する打牌 GuiActionView。"""
     return {
         action.tile_label: action
         for action in actions
@@ -86,15 +87,7 @@ def clear_frame(frame: Any) -> None:
 
 
 class GuiBoardRenderer:
-    """`GuiBoardView`をTk widgetへ描画する共有renderer。
-
-    `on_select_action`はlive Human decisionだけが渡す。Replayのように選択が
-    存在しない表示では`None`のままにし、legal打牌buttonを生成しない。
-
-    牌画像は表示sizeごとに別registryを受け取る。`tile_images`は手牌 / 副露 /
-    ドラ表示牌、`river_tile_images`は河専用で、同じtile labelでもcache
-    objectはsizeごとに分離される。
-    """
+    """`GuiBoardView`をTk widgetへ描画する共有renderer。"""
 
     def __init__(
         self,
@@ -125,23 +118,17 @@ class GuiBoardRenderer:
             self.render_seat(frame, by_position[position])
 
         clear_frame(center)
-        self._ttk.Label(center, text=board.round_label, style="Center.TLabel").pack(
-            pady=(2, 1)
-        )
-        self._ttk.Label(center, text=board.center_detail).pack(pady=1)
-        self._ttk.Label(center, text="ドラ表示牌").pack(pady=(1, 0))
-        dora_row = self._ttk.Frame(center)
-        dora_row.pack(pady=(0, 1))
+        self._ttk.Label(center, text=board.round_label, style="Center.TLabel").pack()
+        self._ttk.Label(center, text=board.center_detail).pack()
+        dora_line = self._ttk.Frame(center)
+        dora_line.pack(anchor="center", pady=1)
+        self._ttk.Label(dora_line, text="ドラ").pack(side="left", padx=(0, 3))
         if board.dora_indicators:
             for tile_label in board.dora_indicators:
-                self.tile_image_label(dora_row, tile_label).pack(side="left")
+                self.tile_image_label(dora_line, tile_label).pack(side="left")
         else:
-            self._ttk.Label(dora_row, text="なし").pack()
-        self._ttk.Label(
-            center,
-            text=f"判断\n{board.decision_label}",
-            justify="center",
-        ).pack(pady=1)
+            self._ttk.Label(dora_line, text="なし").pack(side="left")
+        self._ttk.Label(center, text=f"判断: {board.decision_label}").pack()
 
         clear_frame(hand)
         tiles = self._ttk.Frame(hand)
@@ -153,7 +140,7 @@ class GuiBoardRenderer:
             )
         if board.drawn_tile is not None:
             self._ttk.Separator(tiles, orient="vertical").pack(
-                side="left", fill="y", padx=4
+                side="left", fill="y", padx=3
             )
             tsumogiri_action = drawn_tile_tsumogiri_action(actions, board.drawn_tile)
             self.tile_control(tiles, board.drawn_tile, tsumogiri_action).pack(
@@ -161,27 +148,24 @@ class GuiBoardRenderer:
             )
 
     def render_seat(self, frame: Any, seat: GuiSeatView) -> None:
+        """seatを河中心のcontent-sized cardとして描画する。
+
+        score / riichiはLabelFrame見出しへ集約し、副露は河の横へ置く。
+        これにより、テキストや副露が河の縦方向を消費しない。
+        """
         clear_frame(frame)
-        frame.configure(text=seat.label)
-        status = f"{seat.score}点"
+        title = f"{seat.label}  {seat.score}点"
         if seat.riichi:
-            status += f"  /  {seat.riichi}"
-        self._ttk.Label(frame, text=status).pack(anchor="w")
+            title += f" / {seat.riichi}"
+        frame.configure(text=title)
 
-        self._ttk.Label(frame, text="副露:").pack(anchor="w", pady=(1, 0))
-        melds_row = self._ttk.Frame(frame)
-        melds_row.pack(anchor="w", pady=(0, 1))
-        if not seat.melds:
-            self._ttk.Label(melds_row, text="なし").pack(side="left")
-        else:
-            for meld in seat.melds:
-                self.render_meld(melds_row, meld)
+        body = self._ttk.Frame(frame)
+        body.pack(anchor="w")
 
-        self._ttk.Label(frame, text="河:").pack(anchor="w")
-        river_box = self._ttk.Frame(frame)
-        river_box.pack(anchor="w")
+        river_box = self._ttk.Frame(body)
+        river_box.grid(row=0, column=0, sticky="nw")
         if not seat.river:
-            self._ttk.Label(river_box, text="-").pack(anchor="w")
+            self._ttk.Label(river_box, text="河 -").pack(anchor="w")
         else:
             for start in range(0, len(seat.river), RIVER_ROW_SIZE):
                 row = self._ttk.Frame(river_box)
@@ -189,22 +173,29 @@ class GuiBoardRenderer:
                 for cell in seat.river[start : start + RIVER_ROW_SIZE]:
                     self.render_river_tile(row, cell).pack(side="left")
 
+        if seat.melds:
+            melds_box = self._ttk.Frame(body)
+            melds_box.grid(row=0, column=1, padx=(5, 0), sticky="nw")
+            for meld in seat.melds:
+                self.render_meld(melds_box, meld)
+
     def render_meld(self, parent: Any, meld: GuiMeldView) -> None:
         box = self._ttk.Frame(parent, padding=(0, 0, 3, 0))
-        box.pack(side="left")
-        self._ttk.Label(box, text=meld.type_label, font=("TkDefaultFont", 8)).pack()
+        box.pack(side="left", anchor="n")
+        meta = [meld.type_label]
+        if meld.from_seat is not None:
+            meta.append(f"from {meld.from_seat}")
+        if meld.called_tile is not None:
+            meta.append(f"called {meld.called_tile}")
+        self._ttk.Label(
+            box,
+            text=" / ".join(meta),
+            font=("TkDefaultFont", 7),
+        ).pack()
         tiles_row = self._ttk.Frame(box)
         tiles_row.pack()
         for tile_label in meld.tiles:
             self.tile_image_label(tiles_row, tile_label).pack(side="left")
-        if meld.from_seat is not None:
-            self._ttk.Label(
-                box, text=f"from {meld.from_seat}", font=("TkDefaultFont", 8)
-            ).pack()
-        if meld.called_tile is not None:
-            self._ttk.Label(
-                box, text=f"called {meld.called_tile}", font=("TkDefaultFont", 8)
-            ).pack()
 
     def render_river_tile(self, parent: Any, cell: GuiRiverTile) -> Any:
         box = self._ttk.Frame(parent)
