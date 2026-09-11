@@ -135,14 +135,14 @@ class GuiTableLayoutTest(unittest.TestCase):
         setup = Mock()
         table = Mock()
         center = Mock()
-        frame_values = iter([main, setup, table, center])
+        seat_frames = [Mock() for _ in range(4)]
+        frame_values = iter([main, setup, table, *seat_frames, center])
         application._ttk.Frame.side_effect = lambda *args, **kwargs: next(frame_values)
 
-        seat_frames = [Mock() for _ in range(4)]
         hand = Mock()
         actions = Mock()
         log_frame = Mock()
-        labelframes = iter([*seat_frames, hand, actions, log_frame])
+        labelframes = iter([hand, actions, log_frame])
         application._ttk.LabelFrame.side_effect = lambda *args, **kwargs: next(
             labelframes
         )
@@ -155,8 +155,10 @@ class GuiTableLayoutTest(unittest.TestCase):
         application._build_layout(seed=0, opponent="minimal")
 
         for frame, position in zip(seat_frames, TABLE_PLACE, strict=True):
-            relx, rely, anchor = TABLE_PLACE[position]
-            frame.place.assert_called_once_with(relx=relx, rely=rely, anchor=anchor)
+            relx, rely, anchor, x, y = TABLE_PLACE[position]
+            frame.place.assert_called_once_with(
+                relx=relx, rely=rely, anchor=anchor, x=x, y=y
+            )
         relx, rely, anchor = CENTER_PLACE
         center.place.assert_called_once_with(relx=relx, rely=rely, anchor=anchor)
         table.rowconfigure.assert_not_called()

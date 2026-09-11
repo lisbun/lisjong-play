@@ -76,9 +76,45 @@ def _fake_ttk() -> Mock:
     return ttk
 
 
+class _FakePhotoImage:
+    """pixel APIを持つ`PhotoImage`のtest double。
+
+    ツモ切り牌のgrayscale変換がpixelを読み書きするため、Mockのままでは
+    Viewerの生成自体が失敗する。最小の1x1画像として振る舞わせる。
+    """
+
+    def __init__(self, **_kwargs: object) -> None:
+        self._transparent: set[tuple[int, int]] = set()
+
+    def subsample(self, _factor: int) -> "_FakePhotoImage":
+        return self
+
+    def width(self) -> int:
+        return 1
+
+    def height(self) -> int:
+        return 1
+
+    def get(self, _x: int, _y: int) -> tuple[int, int, int]:
+        return (120, 60, 30)
+
+    def put(self, _rows: object) -> None:
+        self._transparent.clear()
+
+    def transparency_get(self, x: int, y: int) -> bool:
+        return (x, y) in self._transparent
+
+    def transparency_set(self, x: int, y: int, value: bool) -> None:
+        if value:
+            self._transparent.add((x, y))
+        else:
+            self._transparent.discard((x, y))
+
+
 def _fake_tk() -> Mock:
     tk = Mock()
     tk.StringVar.side_effect = lambda value="": Mock(**{"get.return_value": value})
+    tk.PhotoImage.side_effect = _FakePhotoImage
     return tk
 
 

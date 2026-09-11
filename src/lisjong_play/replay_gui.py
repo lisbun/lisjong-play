@@ -12,11 +12,12 @@ from typing import Any
 
 from lisjong_play.gui import GuiUnavailableError, load_tk
 from lisjong_play.gui_board import (
-    POSITION_GRID,
+    CENTER_PLACE,
+    TABLE_PLACE,
     GuiBoardRenderer,
+    build_board_tile_images,
     clear_frame,
-    load_river_tile_image,
-    load_tile_image,
+    configure_board_styles,
 )
 from lisjong_play.replay_controller import (
     SPEED_CHOICES,
@@ -28,7 +29,6 @@ from lisjong_play.replay_source import (
     ReplayTimeline,
     load_replay_timeline,
 )
-from lisjong_play.tile_images import TileImageRegistry
 
 _NO_RECORD_MESSAGE = "牌譜を開いてください。"
 
@@ -71,13 +71,8 @@ class _TkReplayApplication:
         self._load_timeline = timeline_loader
         self._controller: ReplayController | None = None
         self._playback_job: Any = None
-        self._tile_images = TileImageRegistry(lambda path: load_tile_image(tk, path))
-        self._river_tile_images = TileImageRegistry(
-            lambda path: load_river_tile_image(tk, path)
-        )
-        self._board_renderer = GuiBoardRenderer(
-            ttk, self._tile_images, self._river_tile_images
-        )
+        self._tile_images = build_board_tile_images(tk)
+        self._board_renderer = GuiBoardRenderer(ttk, self._tile_images)
 
         root.title("lisjong-play 牌譜Replay Viewer")
         root.geometry("1180x900")
@@ -90,13 +85,7 @@ class _TkReplayApplication:
 
     def _configure_style(self) -> None:
         style = self._ttk.Style(self._root)
-        style.configure("Table.TFrame", background="#176b4d")
-        style.configure(
-            "Seat.TLabelframe", background="#f7f3e8", borderwidth=2, relief="solid"
-        )
-        style.configure("Seat.TLabelframe.Label", font=("TkDefaultFont", 11, "bold"))
-        style.configure("Center.TLabel", font=("TkDefaultFont", 12, "bold"))
-        style.configure("TileImage.TLabel", padding=1, relief="flat")
+        configure_board_styles(style)
         style.configure("Primary.TButton", padding=(12, 8))
 
     def _build_layout(self) -> None:
@@ -111,20 +100,17 @@ class _TkReplayApplication:
         self._status_var = self._tk.StringVar(value=_NO_RECORD_MESSAGE)
         self._ttk.Label(top, textvariable=self._status_var).pack(side="left", padx=12)
 
-        self._table = self._ttk.Frame(main, style="Table.TFrame", padding=12)
+        # Live Human Playと同じく、緑の卓面へcontent-sizedのseatをanchorする。
+        self._table = self._ttk.Frame(main, style="Table.TFrame", padding=4)
         self._table.pack(fill="both", expand=True)
-        for index in range(3):
-            self._table.columnconfigure(index, weight=1)
-            self._table.rowconfigure(index, weight=1)
         self._seat_frames: dict[str, Any] = {}
-        for position, (row, column) in POSITION_GRID.items():
-            frame = self._ttk.LabelFrame(
-                self._table, text=position, style="Seat.TLabelframe", padding=8
-            )
-            frame.grid(row=row, column=column, padx=8, pady=8, sticky="nsew")
+        for position, (relx, rely, anchor, x, y) in TABLE_PLACE.items():
+            frame = self._ttk.Frame(self._table, style="Seat.TFrame", padding=2)
+            frame.place(relx=relx, rely=rely, anchor=anchor, x=x, y=y)
             self._seat_frames[position] = frame
-        self._center = self._ttk.Frame(self._table, padding=12)
-        self._center.grid(row=1, column=1, padx=8, pady=8, sticky="nsew")
+        self._center = self._ttk.Frame(self._table, style="Seat.TFrame", padding=4)
+        relx, rely, anchor = CENTER_PLACE
+        self._center.place(relx=relx, rely=rely, anchor=anchor)
 
         self._hand = self._ttk.LabelFrame(
             main, text="このdecision seatの手牌（recordが保持する範囲）", padding=8
