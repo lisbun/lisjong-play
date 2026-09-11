@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from lisjong_play.gui import (
     _ACTION_CONTROL_WIDTH,
@@ -120,6 +120,47 @@ class GuiActionLayoutTest(unittest.TestCase):
         application._choose_action.assert_called_once_with(7)
         application._render_board.assert_not_called()
         application._render_actions.assert_not_called()
+
+
+class GuiTableLayoutTest(unittest.TestCase):
+    def test_table_rows_share_bounded_height_equally(self) -> None:
+        application = _TkGuiApplication.__new__(_TkGuiApplication)
+        application._root = Mock()
+        application._tk = Mock()
+        application._ttk = Mock()
+        application._scrolledtext = Mock()
+
+        main = Mock()
+        setup = Mock()
+        table = Mock()
+        center = Mock()
+        frame_values = iter([main, setup, table, center])
+        application._ttk.Frame.side_effect = lambda *args, **kwargs: next(frame_values)
+
+        seat_frames = [Mock() for _ in range(4)]
+        hand = Mock()
+        actions = Mock()
+        log_frame = Mock()
+        labelframes = iter([*seat_frames, hand, actions, log_frame])
+        application._ttk.LabelFrame.side_effect = (
+            lambda *args, **kwargs: next(labelframes)
+        )
+        application._ttk.Label.return_value = Mock()
+        application._ttk.Entry.return_value = Mock()
+        application._ttk.Combobox.return_value = Mock()
+        application._ttk.Button.return_value = Mock()
+        application._scrolledtext.ScrolledText.return_value = Mock()
+
+        application._build_layout(seed=0, opponent="minimal")
+
+        self.assertEqual(
+            [
+                call(0, weight=1, uniform="table-row"),
+                call(1, weight=1, uniform="table-row"),
+                call(2, weight=1, uniform="table-row"),
+            ],
+            table.rowconfigure.call_args_list,
+        )
 
 
 class GuiHandTileSelectionTest(unittest.TestCase):
