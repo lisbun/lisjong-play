@@ -447,13 +447,25 @@ class ReplayRoundResultCoverageTest(unittest.TestCase):
         self.assertNotIn("放銃:", text)
         self.assertIn("支払い: ツモ 親 2000点 / 子 1000点", text)
 
-    def test_yakuman_uses_the_recorded_yakuman_flag(self) -> None:
+    def test_yakuman_is_presented_without_deriving_a_multiplier(self) -> None:
+        """`WinResult.han`は役満倍率ではないので、倍率として表示しない。
+
+        RiichiEnvはsingle yakumanを`han=13`として返し、yakuman countは
+        recordに存在しない。`13倍`のような逆算表示をしないことを固定する。
+        """
         first, second = fixtures.round_results()
         win = second.wins[0]
-        scoring = replace(fixtures.win_scoring(), yakuman=True, han=1, fu=0)
-        changed = replace(second, wins=(replace(win, scoring=scoring),))
+        changed = replace(
+            second,
+            wins=(replace(win, scoring=fixtures.yakuman_scoring()),),
+        )
         text = self._rounds(_stub_record((first, changed)))[1].result_text
-        self.assertIn("役満: 1倍", text)
+
+        self.assertIn("役満", text)
+        self.assertIn("役: 国士無双", text)
+        self.assertIn("支払い: ロン 32000点", text)
+        self.assertNotIn("倍", text)
+        self.assertNotIn("13", text)
         self.assertNotIn("翻符:", text)
 
 

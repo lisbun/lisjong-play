@@ -148,6 +148,25 @@ def win_scoring() -> RoundWinScoring:
     )
 
 
+def yakuman_scoring() -> RoundWinScoring:
+    """single yakuman相当のscoring facts。
+
+    RiichiEnvの`WinResult.han`は役満でも倍率ではなく13 / 26等の翻数を持つ。
+    single yakumanのrecordがそのまま`13倍`等として表示されないことを固定する
+    ために、実backendと同じ`han=13`を使う。
+    """
+    return RoundWinScoring(
+        han=13,
+        fu=0,
+        yakuman=True,
+        yaku=(RoundYaku(yaku_id=38, name="国士無双", name_en="Kokushi Musou"),),
+        ron_points=32000,
+        tsumo_points_oya=0,
+        tsumo_points_ko=0,
+        pao_payer=None,
+    )
+
+
 def round_results(*, scoring: bool = True) -> tuple[RoundResult, ...]:
     """``_events()``のobjective factと完全に一致するtyped round results。
 

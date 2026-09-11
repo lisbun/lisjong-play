@@ -396,7 +396,11 @@ def _scoring_lines(scoring: Any, win: Any) -> list[str]:
     """
     lines: list[str] = []
     if scoring.yakuman:
-        lines.append(f"役満: {int(scoring.han)}倍")
+        # RiichiEnvの`WinResult.han`は役満でも倍率ではなく13 / 26等の翻数であり、
+        # yakuman countそのものはrecordに存在しない。`han`から倍率を逆算しない
+        # ため、ここでは役満であることだけを示し、内訳はrecorded yakuと
+        # backendが計算した支払い額へ委ねる。
+        lines.append("役満")
     else:
         lines.append(f"翻符: {int(scoring.fu)}符{int(scoring.han)}翻")
     if scoring.yaku:
