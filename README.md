@@ -57,8 +57,11 @@ The board, seat labels, scores, rivers, melds, riichi state, dora indicators, an
 
 The replay is deliberately limited to what the record actually contains:
 
-- Only the seat that owns the current decision has its concealed hand displayed. Durable record v1 guarantees a player-safe own hand per decision seat and no authoritative four-seat concealed-hand history, so other seats' hands are not shown and are never reconstructed.
-- Round results show the recorded outcome, winning seat, deal-in seat, point deltas, and the round's recorded starting scores. Yaku, fu, han, score limits, ura indicators, and exhaustive-draw tenpai seats are **not** in record v1's objective events, so they are not displayed rather than recomputed.
+- Only the seat that owns the current decision has its concealed hand displayed. The durable record guarantees a player-safe own hand per decision seat and no authoritative four-seat concealed-hand history, so other seats' hands are not shown and are never reconstructed.
+- Round results come from the record's typed per-round facts (schema v2): round identity, starting and ending scores, riichi-stick settlement, dora indicators, riichi seats, winner / tsumo-ron / deal-in seat, point deltas, and the draw reason with its exhaustive-vs-abortive distinction.
+- Backend-computed scoring (han, fu, yaku, payments, pao) is shown **only for rounds where the record actually carries it**. RiichiEnv 0.4.8 exposes it for the final round of a game only, so other rounds show `得点内訳: 記録なし` instead of a value derived from the point deltas.
+- Ura indicators are displayed only when the winning seat is one of the record's riichi seats, because the record carries the backend's ura markers on every win regardless of whether riichi was declared.
+- The winning tile, the winning hand, and exhaustive-draw tenpai seats are **not** in the record, so they are not displayed rather than recomputed.
 - Recorded discards carry no riichi-declaration marker, so the river does not mark one.
 
 The viewer never recomputes legality, call priority, scoring, yaku / fu, round progression, hidden hands, or shanten / ukeire, and it never starts an engine game or a Policy during replay.

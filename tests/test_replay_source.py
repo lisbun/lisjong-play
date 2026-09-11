@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from lisjong.policy_contract import (
     AnkanAction,
@@ -18,14 +19,16 @@ from lisjong.policy_contract import (
     Seat,
     TileCategory,
     TsumoAction,
+    Wind,
 )
-from lisjong_arena.game_trace import GameTrace, GameTraceEvent
 from lisjong_engine.public_state import PublicTile
 from lisjong_engine.tile import TileCategory as EngineTileCategory
 from lisjong_engine.tile import TileType as EngineTileType
 
+from lisjong_play import replay_source as replay_source_module
 from lisjong_play.formatting import format_tile, tile_sort_key
 from lisjong_play.replay_source import (
+    SCORING_UNAVAILABLE_NOTE,
     ReplayLoadError,
     _action_label,
     _tile_sort_key,
@@ -68,6 +71,38 @@ def _engine_tile(value):
         ),
         is_red=value.is_red,
     )
+
+
+class _Provenance:
+    lisjong_arena_revision = "a"
+    lisjong_revision = "b"
+    lisjong_engine_revision = "c"
+
+
+def _stub_record(round_results):
+    """Arena strict loaderを介さず、round resultsだけ差し替えたstub record。
+
+    loaderが本来拒否する組み合わせでも、Replay source側が独自にpartial replayへ
+    降格しないことを確認するためのtest専用経路である。
+    """
+
+    class _Inspection:
+        pass
+
+    class _Record:
+        record_identity = "d" * 64
+        policy_identities = ("p0", "p1", "p2", "p3")
+        provenance = _Provenance()
+
+    inspection = fixtures.inspection()
+    stub = _Inspection()
+    stub.result = inspection.result
+    stub.game_trace = inspection.game_trace
+    stub.step_observations = inspection.step_observations
+    stub.round_results = tuple(round_results)
+    record = _Record()
+    record.inspection = stub
+    return record
 
 
 class ReplayLoaderBoundaryTest(unittest.TestCase):
@@ -122,6 +157,19 @@ class ReplayLoaderBoundaryTest(unittest.TestCase):
             document = json.loads(result_path.read_text(encoding="utf-8"))
             document["seed"] = document["seed"] + 1
             result_path.write_text(json.dumps(document), encoding="utf-8")
+
+            with self.assertRaises(ReplayLoadError):
+                load_replay_timeline(path)
+
+    def test_tampered_round_results_payload_fails_closed(self) -> None:
+        """v2で追加されたround-result payloadもArena側の整合検証対象である。"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "record"
+            save_fixture_record(path)
+            payload_path = path / "round_results.json"
+            document = json.loads(payload_path.read_text(encoding="utf-8"))
+            document["rounds"][1]["wins"][0]["winner_seat"] = 3
+            payload_path.write_text(json.dumps(document), encoding="utf-8")
 
             with self.assertRaises(ReplayLoadError):
                 load_replay_timeline(path)
@@ -244,22 +292,38 @@ class ReplayTimelineProjectionTest(unittest.TestCase):
         self.assertEqual("P4", meld.from_seat)
         self.assertEqual("2p", meld.called_tile)
 
-    def test_round_result_uses_only_recorded_objective_values(self) -> None:
+    def test_round_result_uses_recorded_typed_round_facts(self) -> None:
         first = self.timeline.rounds[0].result_text
         self.assertIn("--- 東1局 0本場 終了 ---", first)
-        self.assertIn("結果: 流局 (exhaustive_draw)", first)
+        self.assertIn("結果: 流局（荒牌平局）", first)
+        self.assertIn("流局理由: exhaustive_draw", first)
         self.assertIn("点数移動: P1 +1000 / P2 +1000 / P3 -1000 / P4 -1000", first)
+        self.assertIn("ドラ表示牌: 5m", first)
         self.assertIn("局開始時点数: P1 25000 / P2 25000 / P3 25000 / P4 25000", first)
+        self.assertIn("局終了時点数: P1 26000 / P2 26000 / P3 24000 / P4 24000", first)
+        self.assertIn("供託: 0本 -> 0本", first)
 
         second = self.timeline.rounds[1].result_text
         self.assertIn("結果: 和了 P2（ロン）", second)
         self.assertIn("放銃: P3", second)
         self.assertIn("点数移動: P1 +1000 / P2 +5000 / P3 -3000 / P4 -3000", second)
+        self.assertIn("ドラ表示牌: 3p", second)
+        self.assertIn("立直: P2", second)
 
-    def test_round_result_does_not_present_unrecorded_scoring_detail(self) -> None:
+    def test_backend_scoring_is_presented_only_from_recorded_values(self) -> None:
+        second = self.timeline.rounds[1].result_text
+        self.assertIn("翻符: 40符3翻", second)
+        self.assertIn("役: 立直 / 断幺九", second)
+        self.assertIn("支払い: ロン 5200点", second)
+        self.assertNotIn(SCORING_UNAVAILABLE_NOTE, second)
+
+    def test_ura_indicators_are_shown_for_a_recorded_riichi_winner(self) -> None:
+        self.assertIn("裏ドラ表示牌: 1p", self.timeline.rounds[1].result_text)
+
+    def test_round_result_never_presents_unrecorded_detail(self) -> None:
         for round_view in self.timeline.rounds:
-            for absent in ("役", "符", "翻", "聴牌:"):
-                self.assertNotIn(f"{absent} ", round_view.result_text)
+            for absent in ("聴牌:", "和了牌:", "和了手牌:"):
+                self.assertNotIn(absent, round_view.result_text)
 
     def test_match_result_uses_recorded_scores_and_ranks(self) -> None:
         text = self.timeline.final_result_text
@@ -274,255 +338,160 @@ class ReplayTimelineProjectionTest(unittest.TestCase):
         self.assertIn(f"seed: {SEED}", text)
         self.assertIn(f"game mode: {GAME_MODE}", text)
         self.assertIn("P1=fixture-policy-0", text)
-        self.assertIn("durable local game record v1", text)
+        self.assertIn("durable local game record v2", text)
 
 
 class ReplayRecordConsistencyTest(unittest.TestCase):
     """recordが内部的に一致しない場合は、partial replayにせずfail closedする。"""
 
-    class _Provenance:
-        lisjong_arena_revision = "a"
-        lisjong_revision = "b"
-        lisjong_engine_revision = "c"
-
-    def _record(self, inspection):
-        class _Record:
-            record_identity = "d" * 64
-            policy_identities = ("p0", "p1", "p2", "p3")
-            provenance = ReplayRecordConsistencyTest._Provenance()
-
-        record = _Record()
-        record.inspection = inspection
-        return record
-
-    def _with_replaced_event(self, index: int, payload: dict):
-        """event数を変えずに1 eventだけ差し替えたinspectionを返す。"""
-        inspection = fixtures.inspection()
-        events = list(inspection.game_trace.events)
-        events[index] = GameTraceEvent(
-            sequence=index, event=json.dumps(payload, sort_keys=True)
-        )
-        trace = GameTrace(
-            seed=inspection.game_trace.seed,
-            game_mode=inspection.game_trace.game_mode,
-            events=tuple(events),
-        )
-        return replace(inspection, game_trace=trace)
-
-    def test_unsupported_objective_event_type_fails_closed(self) -> None:
-        inspection = self._with_replaced_event(0, {"type": "unknown_future_event"})
-        with self.assertRaises(ReplayLoadError) as caught:
-            build_timeline(self._record(inspection))
-        self.assertIn("unsupported objective event type", str(caught.exception))
-
-    def test_round_without_a_recorded_result_fails_closed(self) -> None:
-        inspection = self._with_replaced_event(
-            3, {"type": "dahai", "actor": 0, "pai": "2m", "tsumogiri": False}
-        )
-        with self.assertRaises(ReplayLoadError) as caught:
-            build_timeline(self._record(inspection))
-        self.assertIn("no recorded result event", str(caught.exception))
-
-    def test_result_without_a_recorded_round_start_fails_closed(self) -> None:
-        inspection = self._with_replaced_event(
-            1, {"type": "ryukyoku", "reason": "abortive", "deltas": [0, 0, 0, 0]}
-        )
-        with self.assertRaises(ReplayLoadError) as caught:
-            build_timeline(self._record(inspection))
-        self.assertIn("before any recorded round start", str(caught.exception))
-
     def test_round_count_mismatch_fails_closed(self) -> None:
-        """decision側の局数とrecorded round結果の数が合わない場合。"""
-        inspection = self._with_replaced_event(
-            5, {"type": "dahai", "actor": 1, "pai": "3m", "tsumogiri": False}
-        )
+        """decision側の局数とrecorded round resultsの数が合わない場合。"""
         with self.assertRaises(ReplayLoadError) as caught:
-            build_timeline(self._record(inspection))
+            build_timeline(_stub_record(fixtures.round_results()[:1]))
         self.assertIn("do not correspond", str(caught.exception))
 
     def test_round_dealer_mismatch_fails_closed(self) -> None:
         """局名が同じでも、recorded親がdecision側と違えばfail closedする。"""
-        inspection = self._with_replaced_event(
-            5,
-            {
-                "type": "start_kyoku",
-                "bakaze": "E",
-                "kyoku": 2,
-                "honba": 0,
-                "oya": 3,
-                "kyotaku": 0,
-                "dora_marker": "3p",
-                "scores": [26000, 26000, 24000, 24000],
-            },
-        )
+        first, second = fixtures.round_results()
         with self.assertRaises(ReplayLoadError) as caught:
-            build_timeline(self._record(inspection))
+            build_timeline(
+                _stub_record((first, replace(second, dealer_seat=Seat.SEAT_3)))
+            )
         self.assertIn("does not match its decisions", str(caught.exception))
 
     def test_round_identity_mismatch_fails_closed(self) -> None:
-        inspection = self._with_replaced_event(
-            5,
-            {
-                "type": "start_kyoku",
-                "bakaze": "S",
-                "kyoku": 4,
-                "honba": 3,
-                "oya": 1,
-                "kyotaku": 0,
-                "dora_marker": "3p",
-                "scores": [26000, 26000, 24000, 24000],
-            },
-        )
+        first, second = fixtures.round_results()
+        changed = replace(second, round_wind=Wind.SOUTH, hand_number=4, honba=3)
         with self.assertRaises(ReplayLoadError) as caught:
-            build_timeline(self._record(inspection))
+            build_timeline(_stub_record((first, changed)))
         self.assertIn("does not match its decisions", str(caught.exception))
 
+    def test_round_without_an_outcome_fails_closed(self) -> None:
+        """和了も流局も持たないround resultをpartial replayへ降格させない。"""
 
-class ReplayRawEventTypeStrictnessTest(unittest.TestCase):
-    """objective GameTrace fieldを暗黙のint()変換で受理しないこと。
+        class _Outcomeless:
+            def __init__(self, source):
+                for name in (
+                    "round_wind",
+                    "hand_number",
+                    "honba",
+                    "dealer_seat",
+                    "riichi_sticks_before",
+                    "riichi_sticks_after",
+                    "start_scores",
+                    "end_scores",
+                    "dora_indicators",
+                    "riichi_seats",
+                ):
+                    setattr(self, name, getattr(source, name))
+                self.wins = ()
+                self.draw = None
 
-    `GameTraceEvent`が保証するのはeventがvalid JSON objectであるところまでで、
-    個々のMJAI fieldの型はGameTrace contractでは固定されていない。bool / float /
-    string integerをintへcoerceせず、`ReplayLoadError`でfail closedする。
-    """
-
-    class _Provenance:
-        lisjong_arena_revision = "a"
-        lisjong_revision = "b"
-        lisjong_engine_revision = "c"
-
-    def _record(self, inspection):
-        class _Record:
-            record_identity = "d" * 64
-            policy_identities = ("p0", "p1", "p2", "p3")
-            provenance = ReplayRawEventTypeStrictnessTest._Provenance()
-
-        record = _Record()
-        record.inspection = inspection
-        return record
-
-    def _rejects(self, index: int, payload: dict) -> str:
-        inspection = fixtures.inspection()
-        events = list(inspection.game_trace.events)
-        events[index] = GameTraceEvent(
-            sequence=index, event=json.dumps(payload, sort_keys=True)
-        )
-        trace = GameTrace(
-            seed=inspection.game_trace.seed,
-            game_mode=inspection.game_trace.game_mode,
-            events=tuple(events),
-        )
+        first, second = fixtures.round_results()
         with self.assertRaises(ReplayLoadError) as caught:
-            build_timeline(self._record(replace(inspection, game_trace=trace)))
-        return str(caught.exception)
+            build_timeline(_stub_record((_Outcomeless(first), second)))
+        self.assertIn("neither a win nor a draw", str(caught.exception))
 
-    def _start_kyoku(self, **overrides) -> dict:
-        payload = {
-            "type": "start_kyoku",
-            "bakaze": "E",
-            "kyoku": 1,
-            "honba": 0,
-            "oya": 0,
-            "kyotaku": 0,
-            "dora_marker": "5m",
-            "scores": [25000, 25000, 25000, 25000],
-        }
-        payload.update(overrides)
-        return payload
 
-    def _hora(self, **overrides) -> dict:
-        payload = {
-            "type": "hora",
-            "actor": 1,
-            "target": 2,
-            "deltas": [1000, 5000, -3000, -3000],
-        }
-        payload.update(overrides)
-        return payload
+class ReplayRoundResultCoverageTest(unittest.TestCase):
+    """backend scoringの有無と裏ドラ表示条件を、recorded factだけで決める。"""
 
-    def test_string_integer_oya_is_rejected(self) -> None:
-        message = self._rejects(1, self._start_kyoku(oya="0"))
-        self.assertIn("'oya'", message)
-        self.assertIn("JSON integer", message)
+    def _rounds(self, record):
+        return build_timeline(record).rounds
 
-    def test_float_kyoku_is_rejected(self) -> None:
-        message = self._rejects(1, self._start_kyoku(kyoku=1.0))
-        self.assertIn("'kyoku'", message)
-        self.assertIn("JSON integer", message)
+    def test_missing_backend_scoring_is_reported_instead_of_derived(self) -> None:
+        """`scoring is None`の局でhan / fu / 役 / 点数を逆算しない。"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "record"
+            save_fixture_record(path, scoring=False)
+            text = load_replay_timeline(path).rounds[1].result_text
 
-    def test_fractional_float_kyoku_is_rejected(self) -> None:
-        self.assertIn("JSON integer", self._rejects(1, self._start_kyoku(kyoku=1.9)))
+        self.assertIn(SCORING_UNAVAILABLE_NOTE, text)
+        for absent in ("翻符:", "役:", "支払い:"):
+            self.assertNotIn(absent, text)
+        # 点数移動そのものはrecorded objective factなので引き続き表示する。
+        self.assertIn("点数移動: P1 +1000 / P2 +5000 / P3 -3000 / P4 -3000", text)
 
-    def test_bool_honba_is_rejected(self) -> None:
-        message = self._rejects(1, self._start_kyoku(honba=True))
-        self.assertIn("'honba'", message)
-        self.assertIn("JSON integer", message)
+    def test_ura_indicators_are_hidden_when_the_winner_did_not_declare(self) -> None:
+        """裏ドラはrecorded riichi seatsでのみ表示する(Arena文書の指示)。"""
+        first, second = fixtures.round_results()
+        rounds = self._rounds(_stub_record((first, replace(second, riichi_seats=()))))
+        self.assertNotIn("裏ドラ表示牌", rounds[1].result_text)
+        self.assertNotIn("立直:", rounds[1].result_text)
 
-    def test_bool_in_scores_is_rejected(self) -> None:
-        message = self._rejects(
-            1, self._start_kyoku(scores=[True, 25000, 25000, 25000])
+    def test_abortive_draw_is_distinguished_from_an_exhaustive_draw(self) -> None:
+        first, second = fixtures.round_results()
+        changed = replace(
+            first,
+            draw=replace(first.draw, reason="kyuushu_kyuuhai", exhaustive=False),
         )
-        self.assertIn("'scores'[0]", message)
-        self.assertIn("JSON integer", message)
+        rounds = self._rounds(_stub_record((changed, second)))
+        self.assertIn("結果: 流局（途中流局）", rounds[0].result_text)
+        self.assertIn("流局理由: kyuushu_kyuuhai", rounds[0].result_text)
 
-    def test_float_in_scores_is_rejected(self) -> None:
-        message = self._rejects(
-            1, self._start_kyoku(scores=[25000.0, 25000, 25000, 25000])
+    def test_tsumo_win_presents_recorded_tsumo_payments(self) -> None:
+        first, second = fixtures.round_results()
+        win = second.wins[0]
+        tsumo_scoring = replace(
+            fixtures.win_scoring(),
+            ron_points=0,
+            tsumo_points_oya=2000,
+            tsumo_points_ko=1000,
         )
-        self.assertIn("'scores'[0]", message)
-        self.assertIn("JSON integer", message)
-
-    def test_string_integer_in_deltas_is_rejected(self) -> None:
-        message = self._rejects(7, self._hora(deltas=["1000", 5000, -3000, -3000]))
-        self.assertIn("'deltas'[0]", message)
-        self.assertIn("JSON integer", message)
-
-    def test_bool_hora_actor_is_rejected(self) -> None:
-        message = self._rejects(7, self._hora(actor=True))
-        self.assertIn("'actor'", message)
-        self.assertIn("JSON integer", message)
-
-    def test_string_integer_hora_target_is_rejected(self) -> None:
-        message = self._rejects(7, self._hora(target="2"))
-        self.assertIn("'target'", message)
-        self.assertIn("JSON integer", message)
-
-    def test_out_of_range_seat_is_rejected(self) -> None:
-        self.assertIn("seat in 0..3", self._rejects(7, self._hora(actor=4)))
-
-    def test_non_array_scores_is_rejected(self) -> None:
-        message = self._rejects(1, self._start_kyoku(scores=25000))
-        self.assertIn("'scores'", message)
-        self.assertIn("JSON array", message)
-
-    def test_wrong_length_scores_is_rejected(self) -> None:
-        message = self._rejects(1, self._start_kyoku(scores=[25000, 25000, 25000]))
-        self.assertIn("four values", message)
-
-    def test_non_string_bakaze_is_rejected(self) -> None:
-        message = self._rejects(1, self._start_kyoku(bakaze=0))
-        self.assertIn("'bakaze'", message)
-        self.assertIn("JSON string", message)
-
-    def test_non_string_ryukyoku_reason_is_rejected(self) -> None:
-        message = self._rejects(
-            3, {"type": "ryukyoku", "reason": 0, "deltas": [0, 0, 0, 0]}
+        changed = replace(
+            second,
+            wins=(replace(win, tsumo=True, loser_seat=None, scoring=tsumo_scoring),),
         )
-        self.assertIn("'reason'", message)
-        self.assertIn("JSON string", message)
+        text = self._rounds(_stub_record((first, changed)))[1].result_text
+        self.assertIn("結果: 和了 P2（ツモ）", text)
+        self.assertNotIn("放銃:", text)
+        self.assertIn("支払い: ツモ 親 2000点 / 子 1000点", text)
 
-    def test_non_string_event_type_is_rejected(self) -> None:
-        message = self._rejects(0, {"type": 1})
-        self.assertIn("unsupported objective event type", message)
+    def test_yakuman_is_presented_without_deriving_a_multiplier(self) -> None:
+        """`WinResult.han`は役満倍率ではないので、倍率として表示しない。
 
-    def test_well_formed_integers_are_still_accepted(self) -> None:
-        """strict化がvalid recordのnavigation semanticsを変えないこと。"""
-        inspection = fixtures.inspection()
-        timeline = build_timeline(self._record(inspection))
-        self.assertEqual(4, len(timeline.frames))
-        self.assertEqual(
-            ["東1局 0本場", "東2局 0本場"], [item.label for item in timeline.rounds]
+        RiichiEnvはsingle yakumanを`han=13`として返し、yakuman countは
+        recordに存在しない。`13倍`のような逆算表示をしないことを固定する。
+        """
+        first, second = fixtures.round_results()
+        win = second.wins[0]
+        changed = replace(
+            second,
+            wins=(replace(win, scoring=fixtures.yakuman_scoring()),),
         )
+        text = self._rounds(_stub_record((first, changed)))[1].result_text
+
+        self.assertIn("役満", text)
+        self.assertIn("役: 国士無双", text)
+        self.assertIn("支払い: ロン 32000点", text)
+        self.assertNotIn("倍", text)
+        self.assertNotIn("13", text)
+        self.assertNotIn("翻符:", text)
+
+
+class ReplayNoRuleExecutionTest(unittest.TestCase):
+    """Replay projectionがMahjong rule codeを実行しないこと。"""
+
+    def test_module_does_not_depend_on_riichienv(self) -> None:
+        source = Path(replay_source_module.__file__).read_text(encoding="utf-8")
+        for forbidden in ("riichienv", "HandEvaluator", "calculate_score"):
+            self.assertNotIn(forbidden, source)
+
+    def test_building_a_timeline_calls_no_mahjong_rule_code(self) -> None:
+        def forbidden(*args, **kwargs):
+            raise AssertionError("the replay viewer must not evaluate Mahjong rules")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "record"
+            save_fixture_record(path)
+            with (
+                patch("riichienv.HandEvaluator", forbidden),
+                patch("riichienv.calculate_score", forbidden),
+                patch("lisjong_arena.riichienv.round_stats.HandEvaluator", forbidden),
+            ):
+                timeline = load_replay_timeline(path)
+
+        self.assertEqual(2, len(timeline.rounds))
 
 
 class ReplayTypedContractBoundaryTest(unittest.TestCase):

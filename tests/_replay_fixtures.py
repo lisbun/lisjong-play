@@ -7,6 +7,11 @@ readbackできる実bundleを生成する。
 fixtureは意図的に「1 environment step内に前局のryukyoku / end_kyokuと次局の
 start_kyokuが同居する」RiichiEnvの実挙動を再現し、step境界とround境界を
 同一視していないことをtestできるようにしている。
+
+durable record schema v2では、Arena strict loaderがtyped ``round_results``と
+objective ``GameTrace``のsame-run bindingを検証する。そのためここで作る
+``RoundResult``は、``_events()``のstart_kyoku / hora / ryukyokuが持つvalueと
+完全に一致していなければならない。
 """
 
 import json
@@ -36,6 +41,13 @@ from lisjong_arena.riichienv.local_game_runner import (
     SeatDecisionObservation,
     StepDecisionObservation,
 )
+from lisjong_arena.riichienv.round_result import (
+    RoundDrawFact,
+    RoundResult,
+    RoundWinFact,
+    RoundWinScoring,
+    RoundYaku,
+)
 from lisjong_arena.riichienv.round_stats import SeatRoundStats
 from lisjong_arena.single_round_artifact import SingleRoundExecutionProvenance
 
@@ -43,6 +55,10 @@ SEED = 4242
 GAME_MODE = "4p-red-half"
 FINAL_SCORES = (27000, 31000, 21000, 21000)
 FINAL_RANKS = (2, 1, 3, 4)
+ROUND_ONE_START_SCORES = (25000, 25000, 25000, 25000)
+ROUND_TWO_START_SCORES = (26000, 26000, 24000, 24000)
+DRAW_DELTAS = (1000, 1000, -1000, -1000)
+WIN_DELTAS = (1000, 5000, -3000, -3000)
 
 _HEX = "0123456789abcdef"
 _FAKE_REVISION = (_HEX * 3)[:40]
@@ -78,13 +94,13 @@ def _events() -> tuple[GameTraceEvent, ...]:
             "oya": 0,
             "kyotaku": 0,
             "dora_marker": "5m",
-            "scores": [25000, 25000, 25000, 25000],
+            "scores": list(ROUND_ONE_START_SCORES),
         },
         {"type": "dahai", "actor": 0, "pai": "1m", "tsumogiri": False},
         {
             "type": "ryukyoku",
             "reason": "exhaustive_draw",
-            "deltas": [1000, 1000, -1000, -1000],
+            "deltas": list(DRAW_DELTAS),
         },
         {"type": "end_kyoku"},
         {
@@ -95,16 +111,114 @@ def _events() -> tuple[GameTraceEvent, ...]:
             "oya": 1,
             "kyotaku": 0,
             "dora_marker": "3p",
-            "scores": [26000, 26000, 24000, 24000],
+            "scores": list(ROUND_TWO_START_SCORES),
         },
         {"type": "dahai", "actor": 1, "pai": "9s", "tsumogiri": True},
-        {"type": "hora", "actor": 1, "target": 2, "deltas": [1000, 5000, -3000, -3000]},
+        {"type": "reach_accepted", "actor": 1},
+        {
+            "type": "hora",
+            "actor": 1,
+            "target": 2,
+            "deltas": list(WIN_DELTAS),
+            "ura_markers": ["1p"],
+        },
         {"type": "end_kyoku"},
         {"type": "end_game"},
     ]
     return tuple(
         GameTraceEvent(sequence=index, event=json.dumps(payload, sort_keys=True))
         for index, payload in enumerate(payloads)
+    )
+
+
+def win_scoring() -> RoundWinScoring:
+    """backendがcapture できた局のscoring facts。"""
+    return RoundWinScoring(
+        han=3,
+        fu=40,
+        yakuman=False,
+        yaku=(
+            RoundYaku(yaku_id=2, name="立直", name_en="Riichi"),
+            RoundYaku(yaku_id=12, name="断幺九", name_en="Tanyao"),
+        ),
+        ron_points=5200,
+        tsumo_points_oya=0,
+        tsumo_points_ko=0,
+        pao_payer=None,
+    )
+
+
+def yakuman_scoring() -> RoundWinScoring:
+    """single yakuman相当のscoring facts。
+
+    RiichiEnvの`WinResult.han`は役満でも倍率ではなく13 / 26等の翻数を持つ。
+    single yakumanのrecordがそのまま`13倍`等として表示されないことを固定する
+    ために、実backendと同じ`han=13`を使う。
+    """
+    return RoundWinScoring(
+        han=13,
+        fu=0,
+        yakuman=True,
+        yaku=(RoundYaku(yaku_id=38, name="国士無双", name_en="Kokushi Musou"),),
+        ron_points=32000,
+        tsumo_points_oya=0,
+        tsumo_points_ko=0,
+        pao_payer=None,
+    )
+
+
+def round_results(*, scoring: bool = True) -> tuple[RoundResult, ...]:
+    """``_events()``のobjective factと完全に一致するtyped round results。
+
+    ``scoring=False``は、RiichiEnvがbackend scoringを公開しなかった局
+    (実runでは非最終局で普通に起きる)を表す。
+    """
+    return (
+        RoundResult(
+            round_wind=Wind.EAST,
+            hand_number=1,
+            honba=0,
+            dealer_seat=Seat.SEAT_0,
+            riichi_sticks_before=0,
+            riichi_sticks_after=0,
+            start_scores=ROUND_ONE_START_SCORES,
+            end_scores=ROUND_TWO_START_SCORES,
+            dora_indicators=(tile(TileCategory.MANZU, 5),),
+            riichi_seats=(),
+            start_event_sequence=1,
+            wins=(),
+            draw=RoundDrawFact(
+                reason="exhaustive_draw",
+                exhaustive=True,
+                deltas=DRAW_DELTAS,
+                event_sequence=3,
+            ),
+        ),
+        RoundResult(
+            round_wind=Wind.EAST,
+            hand_number=2,
+            honba=0,
+            dealer_seat=Seat.SEAT_1,
+            riichi_sticks_before=0,
+            riichi_sticks_after=0,
+            start_scores=ROUND_TWO_START_SCORES,
+            end_scores=FINAL_SCORES,
+            dora_indicators=(tile(TileCategory.PINZU, 3),),
+            riichi_seats=(Seat.SEAT_1,),
+            start_event_sequence=5,
+            wins=(
+                RoundWinFact(
+                    winner_seat=Seat.SEAT_1,
+                    tsumo=False,
+                    loser_seat=Seat.SEAT_2,
+                    deltas=WIN_DELTAS,
+                    ura_indicators=(tile(TileCategory.PINZU, 1),),
+                    event_sequence=8,
+                    scoring=win_scoring() if scoring else None,
+                ),
+            ),
+            draw=None,
+        ),
     )
 
 
@@ -193,17 +307,18 @@ def _decision(
     )
 
 
-def inspection() -> LocalGameInspection:
+def inspection(*, scoring: bool = True) -> LocalGameInspection:
     """2局 / 4 decisionのcompleted inspection。
 
-    step 2は`ryukyoku` / `end_kyoku` / 次局`start_kyoku` / `dahai`を1 step内に
+    step 1は`ryukyoku` / `end_kyoku` / 次局`start_kyoku` / `dahai`を1 step内に
     含み、step境界 = round境界という単純化が成り立たないことを固定する。
+    各stepのdecisionは、そのstepが発行するeventより前の局に属する。
     """
     steps = (
         StepDecisionObservation(
             step_ordinal=0,
-            event_sequence_start=0,
-            event_sequence_end=2,
+            event_sequence_start=2,
+            event_sequence_end=3,
             seat_decisions=(
                 _decision(
                     seat=Seat.SEAT_0,
@@ -217,8 +332,8 @@ def inspection() -> LocalGameInspection:
         ),
         StepDecisionObservation(
             step_ordinal=1,
-            event_sequence_start=2,
-            event_sequence_end=3,
+            event_sequence_start=3,
+            event_sequence_end=7,
             seat_decisions=(
                 _decision(
                     seat=Seat.SEAT_1,
@@ -232,8 +347,8 @@ def inspection() -> LocalGameInspection:
         ),
         StepDecisionObservation(
             step_ordinal=2,
-            event_sequence_start=3,
-            event_sequence_end=7,
+            event_sequence_start=7,
+            event_sequence_end=9,
             seat_decisions=(
                 _decision(
                     seat=Seat.SEAT_2,
@@ -247,8 +362,8 @@ def inspection() -> LocalGameInspection:
         ),
         StepDecisionObservation(
             step_ordinal=3,
-            event_sequence_start=7,
-            event_sequence_end=10,
+            event_sequence_start=9,
+            event_sequence_end=11,
             seat_decisions=(
                 _decision(
                     seat=Seat.SEAT_3,
@@ -287,13 +402,14 @@ def inspection() -> LocalGameInspection:
         ),
         game_trace=GameTrace(seed=SEED, game_mode=GAME_MODE, events=_events()),
         step_observations=steps,
+        round_results=round_results(scoring=scoring),
     )
 
 
-def save_fixture_record(path):
+def save_fixture_record(path, *, scoring: bool = True):
     """fixture inspectionを実bundleとして書き出し、strict recordを返す。"""
     return save_local_game_record(
-        inspection(),
+        inspection(scoring=scoring),
         path,
         policy_identities={seat: f"fixture-policy-{int(seat)}" for seat in Seat},
         max_steps=None,

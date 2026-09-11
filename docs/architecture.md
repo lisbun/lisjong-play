@@ -60,9 +60,10 @@ live Human Play       CLI / Tkinter GUI            (implemented)
 live AI Spectator     lisjong-play #25             (not implemented yet)
 persisted Replay      lisjong-play #26             (this Issue)
 raw durable record    lisjong-arena #155 / COMPLETE
+                      lisjong-arena #207 / schema v2 round-result facts
 ```
 
-The Replay Viewer is a **consumer** of the `lisjong-arena` durable local game record schema v1. `lisjong-play` is not the owner of that schema, does not fork its raw format, and does not parse the bundle files itself. The only record entry point is Arena's supported strict loader `lisjong_arena.durable_local_game_record.load_local_game_record()`:
+The Replay Viewer is a **consumer** of the `lisjong-arena` durable local game record schema v2. `lisjong-play` is not the owner of that schema, does not fork its raw format, and does not parse the bundle files itself. The only record entry point is Arena's supported strict loader `lisjong_arena.durable_local_game_record.load_local_game_record()`:
 
 ```text
 durable record bundle
@@ -84,7 +85,7 @@ A loader rejection (unsupported schema version, corrupt / truncated / tampered p
 
 The presentation step is **one recorded seat decision**. Both the board and the round identity come from that decision's recorded `PolicyInput`, so no navigation unit is invented on top of the record.
 
-Round boundaries come from the recorded round identity (`round_wind` / `hand_number` / `honba` / `dealer_seat`), and round results come from the objective `GameTrace` event order. RiichiEnv can emit a previous round's `hora` / `ryukyoku` and the next round's `start_kyoku` inside a single environment step, so neither boundary is derived from step ordinals or step/event intervals. The decision-derived round sequence and the trace-derived round sequence are cross-checked on load and fail closed when they disagree.
+Round boundaries come from the recorded round identity (`round_wind` / `hand_number` / `honba` / `dealer_seat`), and round results come from the record's typed `LocalGameInspection.round_results`. RiichiEnv can emit a previous round's `hora` / `ryukyoku` and the next round's `start_kyoku` inside a single environment step, so neither boundary is derived from step ordinals or step/event intervals. Arena captures those round facts at execution time and binds them to the objective `GameTrace` inside its own strict loader; `lisjong-play` no longer re-parses MJAI events to rebuild round results. The decision-derived round sequence and the recorded round-result sequence are still cross-checked here, and fail closed when they disagree.
 
 Backward navigation moves the recorded frame index; the engine is never run in reverse, and no engine or Policy execution is started at any point during replay. Tk widget state is never the source of truth: `ReplayController` holds the cursor, playback flag, and speed, and the auto-play timer is a Tk main-thread `after` job that is cancelled on pause, on manual navigation, and on window close.
 
@@ -92,9 +93,13 @@ Backward navigation moves the recorded frame index; the engine is never run in r
 
 Legality, call priority, scoring, yaku / fu, riichi settlement, round progression, hidden-hand inference, and shanten / ukeire are never recomputed in the viewer. Presentation is built only from recorded values.
 
-Concealed hands are shown **only for the seat that owns the decision**, taken from that decision's player-safe recorded `PolicyInput.own_hand`. Durable record v1 guarantees a player-safe own hand per decision seat and no authoritative four-seat concealed-hand projection over time, so multiple seats' `PolicyInput` values are never merged into a synthetic omniscient state and other seats' hands are not displayed. Recorded discards carry no riichi-declaration marker, so the river shows none rather than guessing one.
+Concealed hands are shown **only for the seat that owns the decision**, taken from that decision's player-safe recorded `PolicyInput.own_hand`. The durable record guarantees a player-safe own hand per decision seat and no authoritative four-seat concealed-hand projection over time, so multiple seats' `PolicyInput` values are never merged into a synthetic omniscient state and other seats' hands are not displayed. Recorded discards carry no riichi-declaration marker, so the river shows none rather than guessing one.
 
-Round result presentation is a bounded projection of recorded objective events only: outcome kind, winning seat, deal-in seat, point deltas, and the round's recorded starting scores. Yaku, fu, han, score limits, ura indicators, and exhaustive-draw tenpai seats are not present in durable record v1's `hora` / `ryukyoku` events and are therefore not displayed. Reaching parity with the live `RoundCompletionFact` presentation would require reimplementing scoring and tenpai evaluation in the viewer, which this repository does not do; that remains an open Arena/engine-side replay-projection prerequisite.
+Round result presentation is a bounded projection of the record's typed per-round facts: round identity, start and end scores, riichi-stick settlement, dora indicators, riichi seats, winner, win method, deal-in seat, point deltas, ura indicators, and the draw reason with its exhaustive-vs-abortive distinction.
+
+Backend-computed scoring (`han` / `fu` / `yaku` / payments / pao) is presented verbatim when the record carries it and reported as unavailable when it does not. Arena #207 established that RiichiEnv 0.4.8 replaces `env.win_results` before an `env.step()` returns for every non-final round, so that scoring is capturable only for a game's final round. The viewer never derives the missing values from point deltas or from other rounds. Ura indicators are gated on the recorded riichi seats, since the backend emits ura markers on every win regardless of riichi.
+
+The winning tile, the winning hand, and exhaustive-draw tenpai seats remain absent from the record. Displaying them would require reimplementing scoring and tenpai evaluation in the viewer, which this repository does not do; that remains an open RiichiEnv-side prerequisite tracked on `lisjong-arena#207`.
 
 The final ranking comes from the recorded `LocalGameResult` scores and ranks.
 
