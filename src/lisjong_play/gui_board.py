@@ -16,11 +16,11 @@ from lisjong_play.gui_model import (
 )
 
 RIVER_ROW_SIZE = 6
-# 600x800 assets -> about 33x44 for hand / meld / dora, 22x29 for river.
-# Manual Windows validation showed the previous 50x66 / 33x44 pair still consumed
-# too much vertical space and could push the hand / controls below the viewport.
-TILE_IMAGE_SUBSAMPLE = 18
-RIVER_TILE_IMAGE_SUBSAMPLE = 27
+# 600x800 assets -> about 27x36 for hand / meld / dora, 15x20 for river.
+# Repeated Windows manual validation showed that 33x44 / 22x29 still clipped
+# second and later river rows inside the bounded table layout.
+TILE_IMAGE_SUBSAMPLE = 22
+RIVER_TILE_IMAGE_SUBSAMPLE = 40
 
 POSITION_GRID = {
     "top": (0, 1),
@@ -211,7 +211,7 @@ class GuiBoardRenderer:
         self.river_tile_image_label(box, cell.tile).pack()
         caption = river_caption(cell)
         if caption:
-            self._ttk.Label(box, text=caption, font=("TkDefaultFont", 7)).pack()
+            self._ttk.Label(box, text=caption, font=("TkDefaultFont", 6)).pack()
         return box
 
     def tile_image(self, tile_label: str) -> Any:
