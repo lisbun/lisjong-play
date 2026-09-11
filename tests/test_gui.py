@@ -142,8 +142,8 @@ class GuiTableLayoutTest(unittest.TestCase):
         actions = Mock()
         log_frame = Mock()
         labelframes = iter([*seat_frames, hand, actions, log_frame])
-        application._ttk.LabelFrame.side_effect = (
-            lambda *args, **kwargs: next(labelframes)
+        application._ttk.LabelFrame.side_effect = lambda *args, **kwargs: next(
+            labelframes
         )
         application._ttk.Label.return_value = Mock()
         application._ttk.Entry.return_value = Mock()
