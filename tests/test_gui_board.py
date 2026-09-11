@@ -139,7 +139,9 @@ class GuiTileImageRegistrySharingTest(unittest.TestCase):
         )
         board._river_tile_images.get.assert_not_called()
 
-    def test_meld_caption_keeps_called_tile_and_source_on_one_compact_line(self) -> None:
+    def test_meld_caption_keeps_called_tile_and_source_on_one_compact_line(
+        self,
+    ) -> None:
         board = renderer()
 
         board.render_meld(Mock(), GuiMeldView("ポン", ("1m", "1m", "1m"), "P2", "1m"))
