@@ -93,6 +93,9 @@ def seat_melds_come_first(position: str) -> bool:
 BOARD_FELT_COLOR = "#176b4d"
 BOARD_TEXT_COLOR = "#f4f1e6"
 SEAT_INFO_COLOR = "#0d4634"
+# 牌画像は角が透過しているため、labelの背景がそのまま透けて見える。
+# 卓上の牌は白地に置き、フェルトの緑が牌の中に出ないようにする。
+BOARD_TILE_BACKGROUND = "#ffffff"
 
 
 def configure_board_styles(style: Any) -> None:
@@ -105,7 +108,7 @@ def configure_board_styles(style: Any) -> None:
     style.configure("Seat.TFrame", background=BOARD_FELT_COLOR)
     style.configure(
         "BoardTile.TLabel",
-        background=BOARD_FELT_COLOR,
+        background=BOARD_TILE_BACKGROUND,
         padding=0,
         relief="flat",
     )

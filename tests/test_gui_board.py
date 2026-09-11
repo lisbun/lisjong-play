@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import Mock
 
 from lisjong_play.gui_board import (
+    BOARD_TILE_BACKGROUND,
     BOARD_TILE_IMAGE_SUBSAMPLE,
     HAND_TILE_IMAGE_SUBSAMPLE,
     RIVER_ROW_SIZE,
@@ -12,6 +13,7 @@ from lisjong_play.gui_board import (
     BoardTileImages,
     GuiBoardRenderer,
     build_board_tile_images,
+    configure_board_styles,
     desaturate_tile_image,
     gray_pixel_rows,
     load_board_tile_image,
@@ -558,6 +560,24 @@ class GuiBoardTileImageBundleTest(unittest.TestCase):
 
         registries = (images.hand, images.board, images.river, images.river_tsumogiri)
         self.assertEqual(4, len({id(registry) for registry in registries}))
+
+
+class GuiBoardStyleTest(unittest.TestCase):
+    def test_table_tiles_sit_on_a_white_backing_not_the_felt(self) -> None:
+        """牌画像の角は透過しているため、背景が緑だと牌の中に緑が透ける。"""
+        style = Mock()
+
+        configure_board_styles(style)
+
+        configured = {
+            call.args[0]: call.kwargs
+            for call in style.configure.call_args_list
+            if call.args
+        }
+        self.assertEqual(
+            BOARD_TILE_BACKGROUND, configured["BoardTile.TLabel"]["background"]
+        )
+        self.assertEqual("#ffffff", BOARD_TILE_BACKGROUND)
 
 
 class GuiMeldCaptionTest(unittest.TestCase):
