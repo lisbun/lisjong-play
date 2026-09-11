@@ -15,6 +15,7 @@ from lisjong_play.gui_board import (
     POSITION_GRID,
     GuiBoardRenderer,
     clear_frame,
+    load_river_tile_image,
     load_tile_image,
 )
 from lisjong_play.replay_controller import (
@@ -71,7 +72,12 @@ class _TkReplayApplication:
         self._controller: ReplayController | None = None
         self._playback_job: Any = None
         self._tile_images = TileImageRegistry(lambda path: load_tile_image(tk, path))
-        self._board_renderer = GuiBoardRenderer(ttk, self._tile_images)
+        self._river_tile_images = TileImageRegistry(
+            lambda path: load_river_tile_image(tk, path)
+        )
+        self._board_renderer = GuiBoardRenderer(
+            ttk, self._tile_images, self._river_tile_images
+        )
 
         root.title("lisjong-play 牌譜Replay Viewer")
         root.geometry("1180x900")

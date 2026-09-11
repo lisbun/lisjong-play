@@ -5,6 +5,7 @@ from lisjong_play.gui import (
     _ACTION_CONTROL_WIDTH,
     _ACTION_ROW_CAPACITY,
     _HAND_DISCARD_INSTRUCTION,
+    _LOG_VISIBLE_LINES,
     GuiUnavailableError,
     _action_button_attributes,
     _action_units,
@@ -15,14 +16,13 @@ from lisjong_play.gui import (
     main,
 )
 from lisjong_play.gui_board import (
+    CENTER_PLACE,
+    TABLE_PLACE,
     drawn_tile_tsumogiri_action,
     hand_discard_actions,
 )
 from lisjong_play.gui_bridge import DecisionRequested, MatchCompleted, RoundCompleted
-from lisjong_play.gui_model import (
-    ActionStyle,
-    GuiActionView,
-)
+from lisjong_play.gui_model import ActionStyle, GuiActionView
 
 
 def action_view(
@@ -62,6 +62,9 @@ class GuiEntryPointTest(unittest.TestCase):
 
 
 class GuiActionLayoutTest(unittest.TestCase):
+    def test_progress_log_is_bounded_to_a_compact_number_of_lines(self) -> None:
+        self.assertEqual(3, _LOG_VISIBLE_LINES)
+
     def test_wide_action_label_wraps_at_semantic_separator(self) -> None:
         action = action_view(0, style="action", tile_label=None)
 
@@ -116,6 +119,47 @@ class GuiActionLayoutTest(unittest.TestCase):
         application._choose_action.assert_called_once_with(7)
         application._render_board.assert_not_called()
         application._render_actions.assert_not_called()
+
+
+class GuiTableLayoutTest(unittest.TestCase):
+    def test_seat_cards_float_at_table_edges_instead_of_stretching_grid_cells(
+        self,
+    ) -> None:
+        application = _TkGuiApplication.__new__(_TkGuiApplication)
+        application._root = Mock()
+        application._tk = Mock()
+        application._ttk = Mock()
+        application._scrolledtext = Mock()
+
+        main = Mock()
+        setup = Mock()
+        table = Mock()
+        center = Mock()
+        frame_values = iter([main, setup, table, center])
+        application._ttk.Frame.side_effect = lambda *args, **kwargs: next(frame_values)
+
+        seat_frames = [Mock() for _ in range(4)]
+        hand = Mock()
+        actions = Mock()
+        log_frame = Mock()
+        labelframes = iter([*seat_frames, hand, actions, log_frame])
+        application._ttk.LabelFrame.side_effect = lambda *args, **kwargs: next(
+            labelframes
+        )
+        application._ttk.Label.return_value = Mock()
+        application._ttk.Entry.return_value = Mock()
+        application._ttk.Combobox.return_value = Mock()
+        application._ttk.Button.return_value = Mock()
+        application._scrolledtext.ScrolledText.return_value = Mock()
+
+        application._build_layout(seed=0, opponent="minimal")
+
+        for frame, position in zip(seat_frames, TABLE_PLACE, strict=True):
+            relx, rely, anchor = TABLE_PLACE[position]
+            frame.place.assert_called_once_with(relx=relx, rely=rely, anchor=anchor)
+        relx, rely, anchor = CENTER_PLACE
+        center.place.assert_called_once_with(relx=relx, rely=rely, anchor=anchor)
+        table.rowconfigure.assert_not_called()
 
 
 class GuiHandTileSelectionTest(unittest.TestCase):
