@@ -1,15 +1,31 @@
 # lisjong-play
 
-Human Play consumer for the lisjong ecosystem.
+Human-facing play and presentation consumer for the lisjong ecosystem.
 
-The playable slice is deliberately small: **Human EAST vs one selected first-party Policy x3**, one hanchan, using the first-party `lisjong-engine` and its default `RuleSet`.
+Current surfaces:
 
-## Run
+```text
+Human Play CLI      implemented
+Human Play GUI      implemented
+Replay Viewer       implemented
+AI Spectator        planned (#25)
+```
+
+Game rules, legal actions, scoring, settlement, and match progression are owned by `lisjong-engine`. `lisjong-play` presents existing owner contracts; it does not reimplement Mahjong rules.
+
+## Requirements
 
 Python 3.14 is required.
 
 ```powershell
 python -m pip install -e ".[dev]"
+```
+
+## Human Play CLI
+
+The current playable slice is **Human EAST vs one selected first-party Policy x3**, one hanchan, using `lisjong-engine` and its default `RuleSet`.
+
+```powershell
 python -m lisjong_play
 python -m lisjong_play --opponent minimal
 python -m lisjong_play --opponent combined
@@ -17,17 +33,13 @@ python -m lisjong_play --opponent yakuhai-call
 python -m lisjong_play --opponent yakuhai-call --seed 12345
 ```
 
-The opponent defaults to `minimal`, preserving the original Human EAST vs `MinimalPolicy` x3 behavior. `combined` selects `GenbutsuDefenseFiniteHorizonValueAwarePolicy`, while `yakuhai-call` selects `YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy`, for all three AI seats. Each AI seat receives an independent Policy instance and runs through the existing first-party bridge from `lisjong-arena`.
+The opponent defaults to `minimal`. `combined` selects `GenbutsuDefenseFiniteHorizonValueAwarePolicy`; `yakuhai-call` selects `YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy`. Each AI seat receives an independent Policy instance through the existing first-party bridge from `lisjong-arena`.
 
-The default match seed is `0`. To replay another deterministic match with the default opponent:
+Human decisions consume the engine's player-safe `SeatObservation` and original legal `ActionDescriptor` values. The UI never reconstructs action legality or synthesizes a replacement action.
 
-```powershell
-python -m lisjong_play --seed 12345
-```
+## Human Play GUI
 
-## GUI prototype
-
-An optional Tkinter desktop prototype exposes the same Human EAST match without changing the CLI:
+The Tkinter GUI exposes the same Human EAST match:
 
 ```powershell
 python -m lisjong_play.gui
@@ -35,13 +47,17 @@ python -m lisjong_play.gui --opponent combined --seed 12345
 lisjong-play-gui --opponent yakuhai-call --seed 12345
 ```
 
-The launch screen lets you change the deterministic seed and select any opponent supported by the CLI. It presents Human EAST at the bottom of a viewer-relative four-player table, with public scores, rivers, melds, riichi state, dora indicators, round metadata, and the Human hand, all rendered with tile images (see [Tile images](#tile-images) below). Legal discard / tsumogiri choices are selected directly by clicking the displayed hand tile images rather than duplicated as separate buttons; the **操作** panel holds only non-discard controls (reactions / calls / win / riichi-stage actions / Pass), and shows a short instruction when a decision has no non-discard controls. Remaining action panel controls still wrap into bounded rows instead of overflowing. A sole Pass is selected automatically because there is no Human choice to make; Pass remains explicit whenever another legal action is available. Each round result is retained in the log and shown in a **局結果** dialog before the next-round confirmation; the final ranking is retained and shown separately in a **半荘結果** dialog.
+The launch screen selects the deterministic seed and opponent. The GUI presents a viewer-relative four-player table with public scores, rivers, melds, riichi state, dora indicators, round metadata, and the Human hand.
 
-This is deliberately a functional prototype: it does not yet include animation, sound, replay, save/resume, or seat/rule selection. Tkinter must be available in the Python 3.14 installation; the standard Windows installer normally includes it. The engine runs on a worker thread and all Tk operations remain on the GUI main thread, so closing the window also releases a pending Human decision or round confirmation.
+Legal discard / tsumogiri choices are selected from the displayed hand. The **操作** panel contains non-discard choices such as calls, win, riichi-stage actions, and Pass. Round results are shown before the next-round confirmation and the final ranking is shown after the hanchan.
 
-## 牌譜Replay Viewer
+The engine runs on a worker thread; Tk widgets are touched only by the main thread. Closing the window releases pending Human-decision or round-confirmation waits.
 
-A third surface replays a **completed `lisjong-arena` durable local game record** in the same Tkinter board, without re-running the engine:
+Current Human Play intentionally does not provide seat selection, rule selection, save/resume, multiplayer, or AI takeover.
+
+## Replay Viewer
+
+A completed `lisjong-arena` durable local game record can be replayed without re-running the engine:
 
 ```powershell
 python -m lisjong_play.replay_gui
@@ -49,41 +65,43 @@ python -m lisjong_play.replay_gui path\to\record-bundle
 lisjong-play-replay path\to\record-bundle
 ```
 
-Without a path the viewer opens a directory chooser. The record is read only through `lisjong-arena`'s supported strict loader, so an unsupported schema version or a corrupt / truncated / tampered bundle is reported as a human-readable error and never shown as a partial replay. Opening a record never modifies it.
+Without a path, the viewer opens a directory chooser. Records are loaded only through Arena's supported strict loader. Unsupported schema versions and corrupt / truncated / tampered bundles fail closed; opening a record never modifies it.
 
-Navigation moves over **recorded seat decisions**: `|< 先頭`, `< 前へ`, `次へ >`, plus `<< 前局` / `次局 >>` for recorded round boundaries (`<< 前局` returns to the current round's start first, then steps back a round). `▶ 再生` / `⏸ 一時停止` drive auto-play and the 速度 selector switches between 0.5x, 1x, 2x and 4x. Speed only changes the wait between frames; it never changes which frames are visited. Playback stops at the last recorded frame, never moves past either boundary, and the timer is released on pause, on manual navigation, and on window close.
+Navigation is over **recorded seat decisions** and includes first/previous/next, previous/next round, play/pause, and 0.5x/1x/2x/4x pacing. Speed changes presentation delay only.
 
-The board, seat labels, scores, rivers, melds, riichi state, dora indicators, and round metadata are rendered by the same board renderer and the same tile images as live Human Play. Round results, the final ranking, and the record's own identity / seed / game mode / Policy assignment are shown in the panel below the controls.
+Live Human Play and Replay Viewer share the same `GuiBoardRenderer`, board layout, and tile-image infrastructure.
 
-The replay is deliberately limited to what the record actually contains:
+### Replay data boundary
 
-- Only the seat that owns the current decision has its concealed hand displayed. The durable record guarantees a player-safe own hand per decision seat and no authoritative four-seat concealed-hand history, so other seats' hands are not shown and are never reconstructed.
-- Round results come from the record's typed per-round facts (schema v2): round identity, starting and ending scores, riichi-stick settlement, dora indicators, riichi seats, winner / tsumo-ron / deal-in seat, point deltas, and the draw reason with its exhaustive-vs-abortive distinction.
-- Backend-computed scoring (han, fu, yaku, payments, pao) is shown **only for rounds where the record actually carries it**. RiichiEnv 0.4.8 exposes it for the final round of a game only, so other rounds show `得点内訳: 記録なし` instead of a value derived from the point deltas.
-- Ura indicators are displayed only when the winning seat is one of the record's riichi seats, because the record carries the backend's ura markers on every win regardless of whether riichi was declared.
-- The winning tile, the winning hand, and exhaustive-draw tenpai seats are **not** in the record, so they are not displayed rather than recomputed.
-- Recorded discards carry no riichi-declaration marker, so the river does not mark one.
+The viewer displays only facts present in the durable record:
 
-The viewer never recomputes legality, call priority, scoring, yaku / fu, round progression, hidden hands, or shanten / ukeire, and it never starts an engine game or a Policy during replay.
+- the current decision seat's player-safe concealed hand; it does not synthesize four-seat omniscient hand history
+- typed per-round facts from durable-record schema v2: round identity, scores, riichi-stick settlement, dora indicators, riichi seats, winner / win method / deal-in seat, point deltas, and draw type/reason
+- backend-computed scoring details only when the record actually contains them
+- final scores / ranks and record provenance
 
-### Tile images
+With RiichiEnv 0.4.8, backend scoring detail is available only where Arena could authoritatively capture it; missing han / fu / yaku / payment detail is shown as unavailable rather than inferred from deltas.
 
-The GUI's tile images are vendored PNGs from [FluffyStuff/riichi-mahjong-tiles](https://github.com/FluffyStuff/riichi-mahjong-tiles) (public domain / CC0 1.0), bundled as package resources under `src/lisjong_play/assets/tiles/` and looked up by canonical tile label through `lisjong_play.tile_images`. Lookup does not depend on the process working directory, and no network access is required at runtime. See `src/lisjong_play/assets/tiles/THIRD_PARTY_NOTICE.md` for the exact source revision and license provenance; that CC0 provenance applies only to the vendored image assets and is separate from this repository's own MIT license.
+The record does not currently provide authoritative winning tile / winning hand / exhaustive-draw tenpai seats or a riichi-declaration river marker. The viewer does not reconstruct those values.
 
-The same assets are displayed at two sizes, largest where the player acts: hand and drawn tiles are the biggest because they are the click targets, while river tiles, melds, and dora indicators share one smaller table size, so a full river stays on the table without pushing the hand area off screen. Tsumogiri discards are drawn from a fourth registry holding river-size images whose white tile face is replaced with gray, the glyph colors left untouched, so a tsumogiri stands out in the river without a text marker and without becoming unreadable. Each size has its own `TileImageRegistry`, so a tile label resolves to one cached image object per size and the Tk `PhotoImage` references stay alive for the application lifetime. Live Human Play and the Replay Viewer share this behavior through the same board renderer.
+The Replay Viewer never recomputes legality, scoring, yaku / fu, round progression, hidden hands, shanten, or ukeire, and it never starts an engine game or Policy while replaying a record.
 
-The four seats are placed around the center of the felt rather than in stretched grid cells: each seat keeps its name / score text and its exposed melds on its outer side and turns only its river toward the middle, so the four rivers frame the round information the way an online mahjong table does. A river grows away from the center as it lengthens, so it never overruns the center block or the hand area below the table. Multiple melds on one seat stack vertically beside the river instead of widening the seat, each labelled only with its call type and the seat it was called from, because the called tile is already visible among the exposed tiles. River tiles are spaced a pixel apart and the river is set apart from the melds, while the tiles inside one call stay flush. Seats are positioned from the center block's measured size on every render, so a longer round line or a different font never pushes the round information under a river. The river legend sits in an unused corner of the felt rather than taking its own row.
+## Tile images
+
+GUI tile images are vendored PNGs from [FluffyStuff/riichi-mahjong-tiles](https://github.com/FluffyStuff/riichi-mahjong-tiles) under public-domain / CC0 1.0 terms. They are bundled under `src/lisjong_play/assets/tiles/` and resolved by canonical tile label through `lisjong_play.tile_images`; no runtime network access is required.
+
+See `src/lisjong_play/assets/tiles/THIRD_PARTY_NOTICE.md` for the exact source revision and license provenance. That provenance applies to the image assets only; this repository remains MIT-licensed.
+
+The shared renderer uses a `BoardTileImages` bundle with separate registries for the Human hand, board-side meld / dora tiles, river tiles, and desaturated tsumogiri river tiles. The Human hand is largest because it is the click target; melds and dora indicators are smaller; river tiles are smallest so six tiles per row remain compact. Tsumogiri is shown by graying the tile face rather than by a text marker, while the CLI keeps its `*` marker.
+
+The four seats are positioned around the measured center block rather than in stretched grid cells. Each seat keeps its name, score, and exposed melds on the outer side and faces its river toward the center; rivers grow away from the center so they do not cover round information or the Human hand. Live Human Play and Replay Viewer share this layout and tile-image infrastructure.
 
 The table composition is informed by [MJX's observation visualizer](https://github.com/mjx-project/mjx/tree/master/mjx/visualizer), but no MJX code, font, or artwork is copied or bundled.
 
-Human decisions use the engine's player-safe `SeatObservation` and original legal `ActionDescriptor` values directly.
+## Planned presentation work
 
-For an ordinary turn where every legal action is a discard, the hand itself becomes the compact selection UI. Legal hand-discard choices are numbered under the corresponding tiles. When an explicit `DiscardActionDescriptor(is_tsumogiri=True)` is present, the drawn tile is separated to the right and `Enter` selects tsumogiri rather than exposing it as another numbered alias.
+- [Issue #25](https://github.com/lisbun/lisjong-play/issues/25): AI x4 live Spectator mode using the existing shared presentation boundary
 
-Reaction decisions use a compact board. When `PassActionDescriptor` is legal, pass is the `Enter` default and only non-pass actions receive menu numbers. A pass-only reaction still waits for Human input. Likewise, an explicit tsumogiri-only decision still waits for `Enter`; it is never auto-selected.
+These Issues own future work. This README describes implemented behavior only.
 
-Non-numeric, zero, negative, and out-of-range input is retried. The selected value returned to the engine is always one of the original `ActionDescriptor` instances supplied by the engine; the CLI does not reconstruct legality or synthesize actions.
-
-After each non-terminal round, the round result and updated scores are shown before the CLI waits for `Enter` to proceed. The terminal round proceeds directly to the player-safe final score/rank display. `Ctrl+C` is handled only at the top-level CLI boundary.
-
-See `docs/architecture.md` for the responsibility and dependency boundary.
+See [`docs/architecture.md`](docs/architecture.md) for responsibility and dependency boundaries.
