@@ -135,10 +135,25 @@ def _position(seat: Seat, viewer_seat: Seat) -> TablePosition:
     return _POSITIONS[(seat_index - viewer_index) % len(SEAT_ORDER)]
 
 
-def build_gui_board_view(observation: SeatObservation) -> GuiBoardView:
-    """SeatObservationだけからviewer-relativeなGUI modelを構築する。"""
+def build_gui_board_view(
+    observation: SeatObservation,
+    *,
+    orientation_seat: Seat | None = None,
+) -> GuiBoardView:
+    """SeatObservationだけからviewer-relativeなGUI modelを構築する。
+
+    `orientation_seat`は卓のどの席を手前(`bottom`)に置くかだけを決める表示上の
+    指定であり、既定ではobservation自身のviewer seatになる。Human Playと
+    Replayはこの既定のまま変わらない。live spectatorのように席ごとに卓を
+    回したくないconsumerだけが固定席を渡す。表示する手牌は常にobservationが
+    持つそのseat自身のplayer-safeな手牌であり、この指定では変わらない。
+    """
     if not isinstance(observation, SeatObservation):
         raise TypeError("observation must be a SeatObservation")
+    if orientation_seat is None:
+        orientation_seat = observation.viewer_seat
+    elif not isinstance(orientation_seat, Seat):
+        raise TypeError("orientation_seat must be a Seat or None")
 
     sources = (
         ("scores", observation.scores),
@@ -165,7 +180,7 @@ def build_gui_board_view(observation: SeatObservation) -> GuiBoardView:
             ) from None
         seats.append(
             GuiSeatView(
-                position=_position(seat, observation.viewer_seat),
+                position=_position(seat, orientation_seat),
                 label=round_seat_label(seat, observation.dealer_seat),
                 score=scores[seat],
                 riichi=riichi_label,

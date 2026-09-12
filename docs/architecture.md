@@ -13,6 +13,7 @@ This document describes **current responsibility and stable presentation boundar
 - presentation-only confirmation / navigation
 - the minimum session orchestration required by its concrete consumers
 - Replay Viewer presentation over supported Arena records
+- live AI-only Spectator presentation over public engine contracts
 
 It does not own:
 
@@ -39,6 +40,7 @@ lisjong-arena
 lisjong-play
     Human interaction / presentation
     replay presentation
+    live spectator presentation
 ```
 
 ## Current presentation surfaces
@@ -47,10 +49,23 @@ lisjong-play
 Human Play CLI       implemented
 Human Play GUI       implemented
 Replay Viewer        implemented
-AI Spectator #25     planned
+Spectator GUI        implemented
 ```
 
-Human Play and Replay Viewer share presentation code where the required facts are equivalent. The existence of multiple consumers does **not** imply a project-wide canonical viewer state or generic frontend framework.
+The three GUI surfaces are distinct presentation **sources** over one shared board presentation:
+
+```text
+Human Play GUI
+    human seat + AI seats
+
+Replay Viewer
+    durable record -> playback
+
+Spectator GUI
+    live AI x4 -> presentation
+```
+
+They share presentation code where the required facts are equivalent. The existence of multiple consumers does **not** imply a project-wide canonical viewer state, event bus, or generic frontend framework.
 
 ## Human decision boundary
 
@@ -101,18 +116,19 @@ Current Human Play exposes `minimal`, `combined`, and `yakuhai-call` opponent se
 
 ## Shared board presentation
 
-`GuiBoardRenderer` is the shared board-rendering boundary for live Human Play and Replay Viewer.
+`GuiBoardRenderer` is the shared board-rendering boundary for all three sources.
 
 ```text
 Human live source ───┐
-                     ├─> GuiBoardRenderer -> Tk board / tile images
-Replay source ───────┘
-
-future Spectator source (#25)
-        └─────────────> reuse the same presentation where semantics match
+Replay source ───────┼─> GuiBoardRenderer -> Tk board / tile images
+Spectator source ────┘
 ```
 
-Do not add a generic `ViewerState` abstraction merely because a third source is planned. Extract only concrete common presentation semantics demonstrated by real consumers.
+Every source produces the same `GuiBoardView`; the renderer does not know which source produced it. Rivers, melds, riichi state, scores, round metadata, and dora indicators are drawn once, in one place.
+
+`build_gui_board_view()` takes an optional `orientation_seat`, which chooses only which seat sits at the table's `bottom` position. Human Play and Replay leave it unset and keep their existing viewer-relative orientation. It does not change which concealed hand the view carries.
+
+Do not add a generic `ViewerState` abstraction merely because three sources exist. Extract only concrete common presentation semantics demonstrated by real consumers.
 
 ## Replay Viewer boundary
 
@@ -195,23 +211,58 @@ The shared renderer receives a `BoardTileImages` bundle with separate registries
 
 Seats are positioned around the measured center block. Name / score text and exposed melds stay on the outer side of each seat, while the river faces the center and grows outward. The renderer derives the center clearance from the current center block dimensions and keeps extra horizontal clearance for the left and right seats, so variable text width does not crowd the side rivers. This layout is shared by live Human Play and Replay Viewer and does not change engine or replay semantics.
 
-## Planned Spectator boundary
+## Spectator boundary
 
-Issue #25 adds a live AI x4 spectator source. It is **not** implemented yet.
-
-The intended dependency shape is:
+Spectator GUI is a live AI-only presentation source. All four seats are real `lisjong.Policy` seats built through the existing `lisjong-arena` bridge, each with its own fresh Policy instance; there is no human selector and no human action-selection UI.
 
 ```text
-first-party engine execution
+AI Policy x4 (PolicySeatSelector, one fresh instance per seat)
         v
-explicit live spectator / objective projection
+first-party lisjong-engine execution (run_hanchan)
         v
-shared lisjong-play presentation
+SpectatorSeatSelector      presentation boundary + pacing gate
+        v
+SpectatorSessionBridge     Tk-free event queue
+        v
+GuiBoardRenderer
+        v
+Tk presentation
 ```
 
-Spectator presentation must not read private mutable engine state as a shortcut. If four-seat concealed-hand viewing is desired, the required truth must come through an explicit engine-owned spectator-safe projection and must never flow back into Policy-visible input.
+Arena durable-record persistence is not a prerequisite; Spectator writes no record.
 
-Arena durable-record persistence is not a prerequisite for live spectator execution.
+### Spectator presentation boundary
+
+One spectator presentation boundary is **one selector decision presentation boundary**: one decision request that the engine driver hands to one seat's selector.
+
+It is deliberately not described as "one action" and not equated with one engine revision. In a reaction window the driver asks three seats for a choice against a single shared revision, so that window produces three boundaries, not one. Round and match completion facts are presented as they are delivered and are not step units.
+
+`SpectatorControl` owns pause / step / speed for that boundary:
+
+```text
+present board  ->  gate (pause / step / pacing)  ->  Policy decides
+```
+
+- pause stops progress to the next boundary; it never mutates engine state
+- step is valid only while paused and releases exactly one boundary
+- speed scales the between-boundary delay only, and is never passed into Policy input
+- close releases a worker that is paused or waiting, so the window can always be closed
+
+The gate is a single `threading.Condition` touched by the worker (wait) and the Tk main thread (pause / resume / step / speed / close), so there is no lock ordering that can deadlock. Recorded replay navigation stays in `ReplayController`; live execution and recorded playback are not forced into one controller.
+
+Because a board redraw can cost more than a boundary interval at the faster speeds, each Tk polling pass renders only the newest `SpectatorDecisionPresented` it drained. That bounds display lag without changing execution: the board is cumulative state rather than a delta, ordered progress / round / match text is never dropped, and a paused pass carries at most one new board so Step semantics are unaffected.
+
+### Spectator information boundary
+
+Spectator reads only the public engine contracts Human Play already uses: the per-decision player-safe `SeatObservation`, and the delivered `RoundProgressFact` / `RoundCompletionFact` / `MatchCompletionFact`. It does not read `MatchState`, `RoundState`, physical tile identity, or wall / dead-wall state, and it does not recompute legality, call priority, scoring, settlement, progression, shanten, or ukeire.
+
+Concealed-hand scope is **public board only**: the board plus the currently deciding seat's own player-safe hand. The currently pinned `lisjong-engine` exposes no engine-owned four-seat spectator projection, and this repository does not substitute one. Opponents' concealed hands are not inferred, and multiple seats' observations are never merged into a synthetic omniscient state. Widening this scope requires an explicit engine-owned spectator-safe projection, not a consumer-side reconstruction.
+
+Information flow stays one-way: nothing presented to the spectator is fed back into Policy-visible input, and no AI reasoning, HandBelief ground truth, or evaluation artifact is produced here.
+
+### Spectator result presentation
+
+Round results and the final scores / ranking reuse `render_round_completion()` and `render_match_completion()`. Spectator does not imitate Human confirmation semantics: results are appended to the progress panel and the spectator uses pause or the boundary pacing to dwell on them. Human Play's next-round confirmation is unchanged. A worker exception is surfaced as an explicit failure and never presented as a completed match.
 
 ## Non-goals of the current architecture
 
@@ -223,5 +274,7 @@ Arena durable-record persistence is not a prerequisite for live spectator execut
 - arbitrary omniscient replay reconstruction
 - AI reasoning / logits / Q-value visualization
 - rule selection, multiplayer, save/resume, or AI takeover as implied current features
+- per-seat arbitrary Policy league editor
+- durable persistence or Arena evaluation from the live Spectator source
 
 Concrete future needs should be handled by bounded Issues and promoted into this document only when they become current architecture.

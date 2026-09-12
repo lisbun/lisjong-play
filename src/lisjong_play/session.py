@@ -1,6 +1,6 @@
-"""Human EAST + selected Policy x3 のminimum hanchan composition。"""
+"""Human EAST + selected Policy x3 / AI x4 のminimum hanchan composition。"""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Literal
 
 from lisjong.policies import (
@@ -74,6 +74,25 @@ def _build_seat_selectors(
         Seat.WEST: PolicySeatSelector(Seat.WEST, _create_opponent_policy(opponent)),
         Seat.NORTH: PolicySeatSelector(Seat.NORTH, _create_opponent_policy(opponent)),
     }
+
+
+def _run_ai_only_session(
+    *,
+    seed: int,
+    selectors: Mapping[Seat, ActionSelector],
+    on_delivery: DeliveryCallback,
+) -> None:
+    """Human selectorを含まないseat compositionで1半荘を実行する。
+
+    seat compositionの妥当性はengine driverが正本であり、ここでは
+    presentation都合のrule / legality判定を足さない。
+    """
+    if type(seed) is not int:
+        raise TypeError("seed must be an int")
+    if not callable(on_delivery):
+        raise TypeError("on_delivery must be callable")
+    match_state = MatchState(seed=seed, rules=None)
+    run_hanchan(match_state, selectors, on_delivery=on_delivery)
 
 
 def _run_session(
