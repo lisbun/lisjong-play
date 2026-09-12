@@ -191,7 +191,9 @@ This is not a commitment to a generic Arena-owned runtime. Reconsider extraction
 
 Tile artwork is provided by the vendored FluffyStuff/riichi-mahjong-tiles assets; exact provenance is recorded in `src/lisjong_play/assets/tiles/THIRD_PARTY_NOTICE.md`.
 
-Current renderer behavior uses separate normal-size and river-size image registries. This is a presentation implementation detail, not a Mahjong-domain contract. Future layout work such as Issue #37 may change display sizing / composition without changing the underlying engine or replay semantics.
+The shared renderer receives a `BoardTileImages` bundle with separate registries for Human-hand tiles, board-side meld / dora tiles, river tiles, and desaturated tsumogiri river tiles. Hand tiles are the largest because they are interactive; board-side tiles are smaller; river tiles are smallest to preserve the six-tiles-per-row layout. Tsumogiri is a presentation-only grayscale treatment in the GUI, while the CLI retains its `*` text marker.
+
+Seats are positioned around the measured center block. Name / score text and exposed melds stay on the outer side of each seat, while the river faces the center and grows outward. The renderer derives the center clearance from the current center block dimensions and keeps extra horizontal clearance for the left and right seats, so variable text width does not crowd the side rivers. This layout is shared by live Human Play and Replay Viewer and does not change engine or replay semantics.
 
 ## Planned Spectator boundary
 

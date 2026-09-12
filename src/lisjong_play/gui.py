@@ -10,11 +10,12 @@ from typing import Any, cast
 
 from lisjong_play.gui_board import (
     CENTER_PLACE,
+    GUI_RIVER_LEGEND,
     TABLE_PLACE,
     GuiBoardRenderer,
+    build_board_tile_images,
     clear_frame,
-    load_river_tile_image,
-    load_tile_image,
+    configure_board_styles,
 )
 from lisjong_play.gui_bridge import (
     DecisionRequested,
@@ -29,14 +30,12 @@ from lisjong_play.gui_bridge import (
     run_gui_worker,
 )
 from lisjong_play.gui_model import GuiActionView, GuiBoardView
-from lisjong_play.renderer import RIVER_LEGEND
 from lisjong_play.session import (
     DEFAULT_OPPONENT,
     DEFAULT_SEED,
     OPPONENT_CHOICES,
     OpponentName,
 )
-from lisjong_play.tile_images import TileImageRegistry
 
 
 class GuiUnavailableError(RuntimeError):
@@ -46,7 +45,7 @@ class GuiUnavailableError(RuntimeError):
 _ACTION_CONTROL_WIDTH = 16
 _ACTION_ROW_CAPACITY = 14
 _WIDE_ACTION_UNITS = 4
-_LOG_VISIBLE_LINES = 3
+_LOG_VISIBLE_LINES = 2
 _HAND_DISCARD_INSTRUCTION = "手牌から打牌を選択してください。"
 _HAND_STYLES = frozenset({"discard", "tsumogiri"})
 
@@ -152,15 +151,9 @@ class _TkGuiApplication:
         self._bridge: GuiSessionBridge | None = None
         self._worker: threading.Thread | None = None
         self._active_decision_id: int | None = None
-        self._tile_images = TileImageRegistry(lambda path: load_tile_image(tk, path))
-        self._river_tile_images = TileImageRegistry(
-            lambda path: load_river_tile_image(tk, path)
-        )
+        self._tile_images = build_board_tile_images(tk)
         self._board_renderer = GuiBoardRenderer(
-            ttk,
-            self._tile_images,
-            self._river_tile_images,
-            on_select_action=self._choose_action,
+            ttk, self._tile_images, on_select_action=self._choose_action
         )
 
         root.title("lisjong-play GUI prototype")
@@ -173,17 +166,7 @@ class _TkGuiApplication:
 
     def _configure_style(self) -> None:
         style = self._ttk.Style(self._root)
-        style.configure("Table.TFrame", background="#176b4d")
-        style.configure(
-            "Seat.TLabelframe",
-            background="#f7f3e8",
-            borderwidth=2,
-            relief="solid",
-        )
-        style.configure("Seat.TLabelframe.Label", font=("TkDefaultFont", 10, "bold"))
-        style.configure("Center.TLabel", font=("TkDefaultFont", 11, "bold"))
-        style.configure("TileImage.TLabel", padding=1, relief="flat")
-        style.configure("TileImage.TButton", padding=1)
+        configure_board_styles(style)
         style.configure("Primary.TButton", padding=(12, 8))
 
     def _build_layout(self, *, seed: int, opponent: OpponentName) -> None:
@@ -228,17 +211,12 @@ class _TkGuiApplication:
         self._table.grid(row=1, column=0, sticky="nsew", pady=(0, 2))
 
         self._seat_frames: dict[str, Any] = {}
-        for position, (relx, rely, anchor) in TABLE_PLACE.items():
-            frame = self._ttk.LabelFrame(
-                self._table,
-                text=position,
-                style="Seat.TLabelframe",
-                padding=3,
-            )
-            frame.place(relx=relx, rely=rely, anchor=anchor)
+        for position, (relx, rely, anchor, x, y) in TABLE_PLACE.items():
+            frame = self._ttk.Frame(self._table, style="Seat.TFrame", padding=2)
+            frame.place(relx=relx, rely=rely, anchor=anchor, x=x, y=y)
             self._seat_frames[position] = frame
 
-        self._center = self._ttk.Frame(self._table, padding=4)
+        self._center = self._ttk.Frame(self._table, style="Seat.TFrame", padding=4)
         relx, rely, anchor = CENTER_PLACE
         self._center.place(relx=relx, rely=rely, anchor=anchor)
         self._ttk.Label(
@@ -249,9 +227,13 @@ class _TkGuiApplication:
             justify="center",
         ).pack()
 
-        self._ttk.Label(main, text=RIVER_LEGEND).grid(
-            row=2, column=0, sticky="ew", pady=(2, 0)
-        )
+        # 凡例は卓の空いた左下の角へ置き、卓の外に1行を使わない。
+        self._ttk.Label(
+            self._table,
+            text=GUI_RIVER_LEGEND,
+            style="BoardText.TLabel",
+            font=("TkDefaultFont", 8),
+        ).place(relx=0.0, rely=1.0, anchor="sw")
 
         self._hand = self._ttk.LabelFrame(main, text="あなたの手牌", padding=4)
         self._hand.grid(row=3, column=0, sticky="ew", pady=(4, 2))

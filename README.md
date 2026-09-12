@@ -92,14 +92,15 @@ GUI tile images are vendored PNGs from [FluffyStuff/riichi-mahjong-tiles](https:
 
 See `src/lisjong_play/assets/tiles/THIRD_PARTY_NOTICE.md` for the exact source revision and license provenance. That provenance applies to the image assets only; this repository remains MIT-licensed.
 
-Current main uses separate normal-size and river-size `TileImageRegistry` instances so long six-tiles-per-row rivers fit without shrinking the Human hand. Live Human Play and Replay Viewer share the same renderer and image-reference lifetime handling.
+The shared renderer uses a `BoardTileImages` bundle with separate registries for the Human hand, board-side meld / dora tiles, river tiles, and desaturated tsumogiri river tiles. The Human hand is largest because it is the click target; melds and dora indicators are smaller; river tiles are smallest so six tiles per row remain compact. Tsumogiri is shown by graying the tile face rather than by a text marker, while the CLI keeps its `*` marker.
+
+The four seats are positioned around the measured center block rather than in stretched grid cells. Each seat keeps its name, score, and exposed melds on the outer side and faces its river toward the center; rivers grow away from the center so they do not cover round information or the Human hand. Live Human Play and Replay Viewer share this layout and tile-image infrastructure.
 
 The table composition is informed by [MJX's observation visualizer](https://github.com/mjx-project/mjx/tree/master/mjx/visualizer), but no MJX code, font, or artwork is copied or bundled.
 
 ## Planned presentation work
 
 - [Issue #25](https://github.com/lisbun/lisjong-play/issues/25): AI x4 live Spectator mode using the existing shared presentation boundary
-- [Issue #37](https://github.com/lisbun/lisjong-play/issues/37): improve table composition and tile-size hierarchy / tsumogiri visibility
 
 These Issues own future work. This README describes implemented behavior only.
 
