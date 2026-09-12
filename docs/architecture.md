@@ -1,12 +1,58 @@
 # Architecture
 
-`lisjong-play` is the Human Play consumer for the lisjong ecosystem.
+`lisjong-play` is the human-facing play and presentation consumer for the lisjong ecosystem.
+
+This document describes **current responsibility and stable presentation boundaries**. Historical implementation sequence belongs in GitHub Issues / PRs rather than being repeated here.
 
 ## Responsibility
 
-`lisjong-play` owns human-facing presentation, input, action-selection UX, confirmation / interaction, CLI / GUI presentation, human seat assignment, and the minimum session orchestration needed to play through `lisjong-engine`.
+`lisjong-play` owns:
 
-Game / round / turn state, legal actions, reaction priority, scoring / settlement, round / match progression, and terminal conditions remain owned by `lisjong-engine`.
+- Human-facing CLI / GUI presentation
+- Human input and action-selection UX
+- presentation-only confirmation / navigation
+- the minimum session orchestration required by its concrete consumers
+- Replay Viewer presentation over supported Arena records
+
+It does not own:
+
+- Mahjong rules, legality, scoring, settlement, or match progression
+- AI Policy semantics
+- Arena record schemas
+- training / evaluation semantics
+
+Owner relationships:
+
+```text
+lisjong-engine
+    game / round / turn truth
+    legal ActionDescriptor values
+    scoring / settlement / progression
+
+lisjong
+    AI Policy semantics
+
+lisjong-arena
+    first-party Policy bridge
+    durable local game record + strict loader
+
+lisjong-play
+    Human interaction / presentation
+    replay presentation
+```
+
+## Current presentation surfaces
+
+```text
+Human Play CLI       implemented
+Human Play GUI       implemented
+Replay Viewer        implemented
+AI Spectator #25     planned
+```
+
+Human Play and Replay Viewer share presentation code where the required facts are equivalent. The existence of multiple consumers does **not** imply a project-wide canonical viewer state or generic frontend framework.
+
+## Human decision boundary
 
 CLI and GUI Human decisions use the engine public boundary directly:
 
@@ -19,10 +65,16 @@ tuple[ActionDescriptor, ...]
 Human UI selector
         |
         v
-selected ActionDescriptor
+original selected ActionDescriptor
 ```
 
-The Tkinter prototype preserves the synchronous engine contract with one narrow thread bridge:
+Human choice does not pass through `PolicyInput`, `DecisionContext`, `InternalAction`, or `execute_policy()`.
+
+The UI does not recalculate legal actions or construct replacement actions. The selected result is one of the engine-provided `ActionDescriptor` instances.
+
+### Tk thread bridge
+
+The Human GUI preserves the synchronous engine contract with a narrow thread bridge:
 
 ```text
 Tk main thread                         engine worker
@@ -33,107 +85,141 @@ round result          <--- delivery -- RoundCompletionFact
 next-round button     --- confirm ---> callback returns
 ```
 
-Only the main thread touches Tk widgets. The worker blocks at the existing Human selector and round-completion boundaries, and window close releases either wait. The GUI view model is derived only from `SeatObservation`; progress and results reuse the same player-safe delivery facts and pure renderers as the CLI. The bridge is a concrete Tk prototype boundary, not a generic asynchronous frontend protocol.
+Only the main thread touches Tk widgets. Window close releases a pending Human decision or round confirmation. This is a concrete Tk boundary, not a generic asynchronous frontend protocol.
 
-Human choice does not pass through `PolicyInput`, `DecisionContext`, `InternalAction`, or `execute_policy()`.
+### Human result presentation
 
-Round completion presentation consumes `lisjong-engine.round_completion.RoundCompletionFact` as the player-safe authority. Win result rendering may display the projected winner hand, winning tile, yaku, han / fu or yakuman units, dora counts, revealed indicator tiles, base hand payments, settlement transfers, and riichi-stick awards. `lisjong-play` does not read `CompletedRound` / `RoundState`, recalculate scoring or dora, infer ura disclosure, or choose an arbitrary representative from equal maximum-score interpretations.
+Round completion presentation consumes `lisjong-engine.round_completion.RoundCompletionFact` as the player-safe authority. `lisjong-play` does not inspect private `CompletedRound` / `RoundState`, recalculate scoring or dora, infer hidden information, or choose among scoring interpretations.
 
-Live Human presentation and post-session history use separate engine-owned player-safe contracts:
+Same-process Human round history remains a separate player-safe engine-owned evidence boundary; it is not a persisted replay format or AI decision trace.
 
-```text
-live Human presentation
-    <- RoundProgressFact / completion delivery
+## AI seat boundary
 
-same-process Human round history
-    <- Human EAST RoundEvidence
-```
+AI seats use real `lisjong.Policy` implementations. Each AI seat receives an independent Policy instance. The current implementation reuses the first-party Policy bridge from `lisjong-arena`; conversion / mapping semantics are not copied into `lisjong-play`.
 
-The opt-in session history narrows each `RoundEvidenceCompletion` to the Human EAST projection as soon as it is delivered, retains engine-provided round identity and evidence order, and becomes available only after a successful hanchan return. It is an in-memory read-oriented boundary, not a decision trace, AI analysis, persisted replay, or generic replay system.
+Current Human Play exposes `minimal`, `combined`, and `yakuhai-call` opponent selections. Policy strength or promotion status remains owned outside this repository.
 
-AI seats use real `lisjong.Policy` implementations. The CLI explicitly supports `minimal`, `combined`, and `yakuhai-call`; all three AI seats use the selected type with an independent Policy instance per seat. The implementation reuses the existing first-party Policy bridge from `lisjong-arena`; bridge conversion / mapping semantics are not copied into this repository.
+## Shared board presentation
 
-## Presentation surfaces
+`GuiBoardRenderer` is the shared board-rendering boundary for live Human Play and Replay Viewer.
 
 ```text
-live Human Play       CLI / Tkinter GUI            (implemented)
-live AI Spectator     lisjong-play #25             (not implemented yet)
-persisted Replay      lisjong-play #26             (this Issue)
-raw durable record    lisjong-arena #155 / COMPLETE
-                      lisjong-arena #207 / schema v2 round-result facts
+Human live source ───┐
+                     ├─> GuiBoardRenderer -> Tk board / tile images
+Replay source ───────┘
+
+future Spectator source (#25)
+        └─────────────> reuse the same presentation where semantics match
 ```
 
-The Replay Viewer is a **consumer** of the `lisjong-arena` durable local game record schema v2. `lisjong-play` is not the owner of that schema, does not fork its raw format, and does not parse the bundle files itself. The only record entry point is Arena's supported strict loader `lisjong_arena.durable_local_game_record.load_local_game_record()`:
+Do not add a generic `ViewerState` abstraction merely because a third source is planned. Extract only concrete common presentation semantics demonstrated by real consumers.
+
+## Replay Viewer boundary
+
+Replay Viewer is a read-only consumer of the `lisjong-arena` durable local game record schema v2. `lisjong-play` does not own or fork the raw record format.
+
+The only record entry point is Arena's supported strict loader:
 
 ```text
 durable record bundle
         v
-Arena strict loader (schema / digest / identity / completion)
+lisjong_arena.durable_local_game_record.load_local_game_record()
         v
-ReplayTimeline        pure, Tk-free presentation source
+ReplayTimeline        pure / Tk-free presentation source
         v
 ReplayController      navigation source of truth
         v
-GuiBoardRenderer      shared with live Human Play
+GuiBoardRenderer
         v
-Tk board / tile image renderer
+Tk presentation
 ```
 
-A loader rejection (unsupported schema version, corrupt / truncated / tampered payload, digest mismatch) fails closed as `ReplayLoadError`. A rejected record is never shown as a partial replay, and opening a record never writes to it.
+Unsupported schema versions and corrupt / truncated / tampered bundles fail closed as replay-load errors. A rejected record is never presented as a partial success, and opening a record is read-only.
 
-### Replay boundary semantics
+### Replay navigation semantics
 
-The presentation step is **one recorded seat decision**. Both the board and the round identity come from that decision's recorded `PolicyInput`, so no navigation unit is invented on top of the record.
+One replay presentation step is **one recorded seat decision**. Board state and round identity come from that decision's recorded `PolicyInput`.
 
-Round boundaries come from the recorded round identity (`round_wind` / `hand_number` / `honba` / `dealer_seat`), and round results come from the record's typed `LocalGameInspection.round_results`. RiichiEnv can emit a previous round's `hora` / `ryukyoku` and the next round's `start_kyoku` inside a single environment step, so neither boundary is derived from step ordinals or step/event intervals. Arena captures those round facts at execution time and binds them to the objective `GameTrace` inside its own strict loader; `lisjong-play` no longer re-parses MJAI events to rebuild round results. The decision-derived round sequence and the recorded round-result sequence are still cross-checked here, and fail closed when they disagree.
+Round boundaries use recorded round identity, while round results use the record's typed per-round result facts. They are not inferred from one-environment-step assumptions, event spacing, or point-delta patterns.
 
-Backward navigation moves the recorded frame index; the engine is never run in reverse, and no engine or Policy execution is started at any point during replay. Tk widget state is never the source of truth: `ReplayController` holds the cursor, playback flag, and speed, and the auto-play timer is a Tk main-thread `after` job that is cancelled on pause, on manual navigation, and on window close.
+`ReplayController` owns cursor, playback state, and speed. Tk widget state is not the source of truth. Playback pacing changes presentation delay only; it never changes the visited decision sequence.
 
-### What the Replay Viewer does not recompute
+### Replay information boundary
 
-Legality, call priority, scoring, yaku / fu, riichi settlement, round progression, hidden-hand inference, and shanten / ukeire are never recomputed in the viewer. Presentation is built only from recorded values.
+The viewer presents recorded facts only.
 
-Concealed hands are shown **only for the seat that owns the decision**, taken from that decision's player-safe recorded `PolicyInput.own_hand`. The durable record guarantees a player-safe own hand per decision seat and no authoritative four-seat concealed-hand projection over time, so multiple seats' `PolicyInput` values are never merged into a synthetic omniscient state and other seats' hands are not displayed. Recorded discards carry no riichi-declaration marker, so the river shows none rather than guessing one.
+Allowed examples:
 
-Round result presentation is a bounded projection of the record's typed per-round facts: round identity, start and end scores, riichi-stick settlement, dora indicators, riichi seats, winner, win method, deal-in seat, point deltas, ura indicators, and the draw reason with its exhaustive-vs-abortive distinction.
+- current decision seat's recorded player-safe `own_hand`
+- public scores / rivers / melds / riichi / dora / round metadata
+- typed recorded round-result facts
+- final result and provenance
 
-Backend-computed scoring (`han` / `fu` / `yaku` / payments / pao) is presented verbatim when the record carries it and reported as unavailable when it does not. Arena #207 established that RiichiEnv 0.4.8 replaces `env.win_results` before an `env.step()` returns for every non-final round, so that scoring is capturable only for a game's final round. The viewer never derives the missing values from point deltas or from other rounds. Ura indicators are gated on the recorded riichi seats, since the backend emits ura markers on every win regardless of riichi.
+Not reconstructed:
 
-The winning tile, the winning hand, and exhaustive-draw tenpai seats remain absent from the record. Displaying them would require reimplementing scoring and tenpai evaluation in the viewer, which this repository does not do; that remains an open RiichiEnv-side prerequisite tracked on `lisjong-arena#207`.
+- other seats' concealed hands
+- missing winning hand / winning tile
+- missing exhaustive-draw tenpai seats
+- missing riichi-declaration river marker
+- missing scoring detail for rounds where the backend did not expose it in time
 
-The final ranking comes from the recorded `LocalGameResult` scores and ranks.
+Multiple seats' `PolicyInput` values must not be merged into a synthetic omniscient state.
 
-## Initial dependency direction
+Replay presentation never recomputes legality, call priority, yaku / fu, scoring, settlement, round progression, shanten, ukeire, or hidden information.
+
+RiichiEnv 0.4.8 can replace backend result state before a non-final round's enclosing `env.step()` returns. Arena schema v2 therefore stores the strongest authoritative per-round facts that can be captured without replay-side reconstruction. Missing backend facts remain explicitly unavailable; Arena #207 is historical completion evidence for that contract, not an open prerequisite.
+
+## Dependency direction
 
 ```text
 lisjong-play
     |---> lisjong-engine
     |---> lisjong
-    `---> lisjong-arena   # first-party Policy bridge reuse
+    `---> lisjong-arena
 ```
 
 `lisjong-engine` must not depend on `lisjong` or `lisjong-play`.
 
-The direct `lisjong-arena` dependency now carries two concrete reuse decisions: the first-party Policy bridge for live AI seats, and the durable local game record strict loader for the Replay Viewer. It is still not a generic runtime architecture commitment. Re-evaluate extraction only when another concrete non-Arena consumer needs the same bridge, the dependency footprint becomes an actual maintenance/deployment problem, or the bridge needs an independent release lifecycle.
+The direct `lisjong-arena` dependency currently has two concrete reasons:
 
-## Human Play vertical slices
+1. first-party Policy bridge reuse for live AI seats
+2. durable local game record strict loader for Replay Viewer
+
+This is not a commitment to a generic Arena-owned runtime. Reconsider extraction only if another concrete non-Arena consumer needs the same boundary, dependency footprint becomes a demonstrated maintenance problem, or an independent release lifecycle is required.
+
+## Tile presentation
+
+Tile artwork is provided by the vendored FluffyStuff/riichi-mahjong-tiles assets; exact provenance is recorded in `src/lisjong_play/assets/tiles/THIRD_PARTY_NOTICE.md`.
+
+Current renderer behavior uses separate normal-size and river-size image registries. This is a presentation implementation detail, not a Mahjong-domain contract. Future layout work such as Issue #37 may change display sizing / composition without changing the underlying engine or replay semantics.
+
+## Planned Spectator boundary
+
+Issue #25 adds a live AI x4 spectator source. It is **not** implemented yet.
+
+The intended dependency shape is:
 
 ```text
-Human EAST
-+
-MinimalPolicy x 3 (default)
-or GenbutsuDefenseFiniteHorizonValueAwarePolicy x 3
-or YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy x 3
-        |
+first-party engine execution
         v
-lisjong-engine
-        |
+explicit live spectator / objective projection
         v
-one hanchan completion
+shared lisjong-play presentation
 ```
 
-The original CLI remains the stable minimum slice. A dedicated Tkinter Issue adds an optional desktop GUI prototype over the same Human EAST / selected Policy x3 composition, using a viewer-relative table; MJX's observation visualizer informed that presentation approach, but no MJX code, font, artwork, proto, or state model is included. A later Issue replaced the GUI's text-based tile display with vendored FluffyStuff/riichi-mahjong-tiles (public domain / CC0 1.0) PNG images, resolved by canonical tile label through a small `lisjong_play.tile_images` registry; see `src/lisjong_play/assets/tiles/THIRD_PARTY_NOTICE.md` for the pinned source revision and license provenance, which is separate from this repository's own MIT license. Hand, drawn-tile, river, meld, and dora-indicator presentation semantics (concealed/drawn separation, legal-discard click-to-select, tsumogiri / riichi-declaration / called-discard river markers) are unchanged by the switch to images. A later Issue split the display scale in two: the shared renderer receives a normal-size tile image registry for hand / drawn tile / melds / dora indicators and a separate smaller river-size registry used only by river tiles, so long rivers fit inside their seat frames without changing hand tile size, the six-tiles-per-row river layout, or the canonical river model.
+Spectator presentation must not read private mutable engine state as a shortcut. If four-seat concealed-hand viewing is desired, the required truth must come through an explicit engine-owned spectator-safe projection and must never flow back into Policy-visible input.
 
-Both live slices intentionally exclude seat selection, per-seat or arbitrary Policy selection, rule selection, TUI/Web UI, save/resume, multiplayer, timeout recovery, and AI takeover. The dedicated same-process Human EAST history boundary above does not add replay persistence or reconstruction, and the live GUI does not require a canonical record schema.
+Arena durable-record persistence is not a prerequisite for live spectator execution.
 
-The Replay Viewer added by Issue #26 is a separate read-only surface over an already-persisted Arena record. It deliberately does not add a generic replay engine, a project-wide canonical `GameRecord`, a viewer-side mahjong rule engine, a record editor or repair path, a record library / database, arbitrary timeline scrubbing, or AI-reasoning visualization. Recorded step ordinal and decision seat are preserved on every frame so a later Issue can link an analysis result to the matching recorded decision without changing this boundary.
+## Non-goals of the current architecture
+
+- project-wide canonical `GameRecord`
+- generic frontend/viewer framework
+- viewer-side Mahjong rule engine
+- record editor / repair path
+- database / record library
+- arbitrary omniscient replay reconstruction
+- AI reasoning / logits / Q-value visualization
+- rule selection, multiplayer, save/resume, or AI takeover as implied current features
+
+Concrete future needs should be handled by bounded Issues and promoted into this document only when they become current architecture.
