@@ -30,7 +30,10 @@ BOARD_TILE_IMAGE_SUBSAMPLE = RIVER_TILE_IMAGE_SUBSAMPLE
 
 # 中央の卓情報とseatの間に必ず残す余白(px)。実際の隙間は中央ブロックの
 # 実寸から毎回計算するため、fontやDPIが変わっても牌とtextが重ならない。
-CENTER_CLEARANCE = 4
+# 左右は中央情報のtextが行ごとに幅が違い、見た目の余白が詰まって見えるため、
+# 上下より広くとる。
+CENTER_CLEARANCE_X = 24
+CENTER_CLEARANCE_Y = 4
 
 # 初期配置用の隙間(px)。中央ブロックを描く前の暫定値で、描画のたびに
 # `place_seats_around_center()`が実寸に合わせて更新する。
@@ -75,8 +78,8 @@ def seat_center_offset(position: str, width: int, height: int) -> tuple[int, int
     中央側の辺をanchorしているので、中央ブロックの半分 + 余白だけ外へずらせば
     牌とtextが重ならない。
     """
-    gap_x = width // 2 + CENTER_CLEARANCE
-    gap_y = height // 2 + CENTER_CLEARANCE
+    gap_x = width // 2 + CENTER_CLEARANCE_X
+    gap_y = height // 2 + CENTER_CLEARANCE_Y
     offsets = {
         "top": (0, -gap_y),
         "bottom": (0, gap_y),
@@ -104,7 +107,7 @@ def horizontal_center_width(seat_frames: dict[str, Any], center: Any) -> int:
     if table_width <= 0:
         return width
     widest_seat = max(int(frame.winfo_reqwidth()) for frame in seat_frames.values())
-    limit = max(0, (table_width // 2 - widest_seat - CENTER_CLEARANCE) * 2)
+    limit = max(0, (table_width // 2 - widest_seat - CENTER_CLEARANCE_X) * 2)
     return min(width, limit)
 
 

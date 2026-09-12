@@ -7,7 +7,8 @@ from unittest.mock import Mock
 from lisjong_play.gui_board import (
     BOARD_TILE_BACKGROUND,
     BOARD_TILE_IMAGE_SUBSAMPLE,
-    CENTER_CLEARANCE,
+    CENTER_CLEARANCE_X,
+    CENTER_CLEARANCE_Y,
     HAND_TILE_IMAGE_SUBSAMPLE,
     MELD_RIVER_GAP,
     RIVER_ROW_SIZE,
@@ -618,17 +619,21 @@ class GuiCenterClearanceTest(unittest.TestCase):
 
     def test_offsets_clear_half_the_center_block_plus_a_margin(self) -> None:
         self.assertEqual(
-            (0, -(50 + CENTER_CLEARANCE)), seat_center_offset("top", 200, 100)
+            (0, -(50 + CENTER_CLEARANCE_Y)), seat_center_offset("top", 200, 100)
         )
         self.assertEqual(
-            (0, 50 + CENTER_CLEARANCE), seat_center_offset("bottom", 200, 100)
+            (0, 50 + CENTER_CLEARANCE_Y), seat_center_offset("bottom", 200, 100)
         )
         self.assertEqual(
-            (-(100 + CENTER_CLEARANCE), 0), seat_center_offset("left", 200, 100)
+            (-(100 + CENTER_CLEARANCE_X), 0), seat_center_offset("left", 200, 100)
         )
         self.assertEqual(
-            (100 + CENTER_CLEARANCE, 0), seat_center_offset("right", 200, 100)
+            (100 + CENTER_CLEARANCE_X, 0), seat_center_offset("right", 200, 100)
         )
+
+    def test_side_seats_keep_a_wider_gap_than_the_top_and_bottom(self) -> None:
+        """左右は中央のtext行末と近く見えるため、上下より広く空ける。"""
+        self.assertGreater(CENTER_CLEARANCE_X, CENTER_CLEARANCE_Y)
 
     def test_a_taller_center_pushes_the_seats_further_out(self) -> None:
         _, near = seat_center_offset("bottom", 200, 100)
