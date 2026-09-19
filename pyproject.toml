@@ -11,9 +11,9 @@ requires-python = ">=3.14,<3.15"
 license = "MIT"
 authors = [{ name = "lisbun" }]
 dependencies = [
-    "lisjong @ git+https://github.com/lisbun/lisjong.git@d39abcd2f609e2d48c16e7ba3ec0d28f4b7a062d",
+    "lisjong @ git+https://github.com/lisbun/lisjong.git@f29d129c67e5232d06563c6e457754377734ed14",
     "lisjong-engine @ git+https://github.com/lisbun/lisjong-engine.git@8735e89e1aea000ab59368d0368d476787827741",
-    "lisjong-arena @ git+https://github.com/lisbun/lisjong-arena.git@e88eacf6ff23ab596a268a5545344b649a95243d",
+    "lisjong-arena @ git+https://github.com/lisbun/lisjong-arena.git@60cf4df92d68ed7bc347bf87d6bd0a2544da7120",
 ]
 
 [project.optional-dependencies]
@@ -24,6 +24,7 @@ lisjong-play = "lisjong_play.cli:main"
 lisjong-play-gui = "lisjong_play.gui:main"
 lisjong-play-replay = "lisjong_play.replay_gui:main"
 lisjong-play-spectator = "lisjong_play.spectator_gui:main"
+lisjong-play-riichilab = "lisjong_play.riichilab_gui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

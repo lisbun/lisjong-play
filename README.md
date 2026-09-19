@@ -137,6 +137,45 @@ Round results and the final scores / ranking reuse the existing `render_round_co
 
 The table is oriented with the fixed EAST seat at the bottom so it does not rotate every decision; the deciding seat is named in the board's decision label. Human Play and Replay orientation is unchanged.
 
+## RiichiLab live viewer
+
+A live RiichiLab **ranked** hanchan can be watched on the same board while `lisjong-arena` plays it:
+
+```powershell
+python -m lisjong_play.riichilab_gui --profile lisjong-dev
+lisjong-play-riichilab --profile lisjong-dev
+```
+
+With Arena's durable ranked record acquired at the same time:
+
+```powershell
+lisjong-play-riichilab `
+  --profile lisjong-dev `
+  --record-dir C:\Dev\lisjong-artifacts\riichilab
+```
+
+This is a separate entry point again; `lisjong-play`, `lisjong-play-gui`, `lisjong-play-replay`, and `lisjong-play-spectator` are unchanged. The initial scope is exactly one ranked hanchan — no requeue, reconnect, multiple games, or attaching to an already-running Arena process.
+
+The bot token is resolved by Arena from the profile's own environment variable, is handed straight to Arena, and is never displayed, logged, or persisted by this viewer.
+
+### Live presentation boundary
+
+The viewer consumes Arena's supported live presentation seam and never parses raw RiichiLab `request_action` JSON or base64 `Observation`. Each frame is projected from the very same `PolicyInput` that Arena gave the Policy for that decision, so the board shows lisjong's own player-visible state with the bound bot seat at the bottom.
+
+**Pause stops the display only.** RiichiLab ranked has a server response deadline, so the viewer never gates execution:
+
+- **表示のみ一時停止** freezes the display cursor. The ranked game, the Policy, and the WebSocket keep running, and frames keep being received while paused.
+- **ステップ** is enabled only while paused and advances exactly one already-received frame. Nothing is sent to the worker.
+- **最新へ追従** jumps back to the newest received frame and resumes following.
+
+This is deliberately different from the Spectator GUI, whose pause *is* a local engine gate.
+
+The pending-frame history has an explicit finite capacity. During a long pause the oldest undisplayed snapshots are dropped — the board is cumulative state, so the newest frame is still correct — and the number of frames received but never displayed is shown in the status line, including the frames Arena itself coalesced. Completion and failure are held outside that capacity and are never dropped.
+
+Final scores are shown as Arena reported them. Final rank, yaku, han, fu, and the winning hand are not provided by the seam and are not inferred. A failed run is reported by exception type and never shown as a completed match.
+
+**Closing the window does not abort the game.** Close detaches the presentation only; the ranked worker is not a daemon thread and is joined after the Tk mainloop exits, so the hanchan finishes under Arena's lifecycle instead of being disconnected mid-game.
+
 ## Tile images
 
 GUI tile images are vendored PNGs from [FluffyStuff/riichi-mahjong-tiles](https://github.com/FluffyStuff/riichi-mahjong-tiles) under public-domain / CC0 1.0 terms. They are bundled under `src/lisjong_play/assets/tiles/` and resolved by canonical tile label through `lisjong_play.tile_images`; no runtime network access is required.
@@ -145,7 +184,7 @@ See `src/lisjong_play/assets/tiles/THIRD_PARTY_NOTICE.md` for the exact source r
 
 The shared renderer uses a `BoardTileImages` bundle with separate registries for the Human hand, board-side meld / dora tiles, river tiles, and desaturated tsumogiri river tiles. The Human hand is largest because it is the click target; melds and dora indicators are smaller; river tiles are smallest so six tiles per row remain compact. Tsumogiri is shown by graying the tile face rather than by a text marker, while the CLI keeps its `*` marker.
 
-The four seats are positioned around the measured center block rather than in stretched grid cells. Each seat keeps its name, score, and exposed melds on the outer side and faces its river toward the center; rivers grow away from the center so they do not cover round information or the Human hand. Live Human Play, Replay Viewer, and Spectator GUI share this layout and tile-image infrastructure.
+The four seats are positioned around the measured center block rather than in stretched grid cells. Each seat keeps its name, score, and exposed melds on the outer side and faces its river toward the center; rivers grow away from the center so they do not cover round information or the Human hand. Live Human Play, Replay Viewer, Spectator GUI, and the RiichiLab live viewer share this layout and tile-image infrastructure.
 
 The table composition is informed by [MJX's observation visualizer](https://github.com/mjx-project/mjx/tree/master/mjx/visualizer), but no MJX code, font, or artwork is copied or bundled.
 

@@ -22,53 +22,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from lisjong.policy_contract import (
-    AnkanAction,
-    ChiAction,
-    DaiminkanAction,
-    DiscardAction,
-    KakanAction,
-    KyuushuKyuuhaiAction,
-    PassAction,
-    PonAction,
-    RiichiAction,
-    RonAction,
-    Seat,
-    TsumoAction,
+from lisjong_play.gui_model import GuiBoardView
+from lisjong_play.policy_input_board import ROUND_WIND_LABELS as _ROUND_WIND_LABELS
+from lisjong_play.policy_input_board import SEAT_NAMES as _SEAT_NAMES
+from lisjong_play.policy_input_board import (
+    PolicyInputProjectionError,
+    build_policy_input_board_view,
+    seat_name,
+    tile_label,
 )
-
-from lisjong_play.gui_model import (
-    GuiBoardView,
-    GuiMeldView,
-    GuiRiverTile,
-    GuiSeatView,
-    TablePosition,
-)
-from lisjong_play.tile_images import TILE_ASSET_FILENAMES
-
-_POSITIONS: tuple[TablePosition, ...] = ("bottom", "right", "top", "left")
-
-_SEAT_NAMES = ("P1", "P2", "P3", "P4")
-_SEAT_WIND_LABELS = ("東家", "南家", "西家", "北家")
-_ROUND_WIND_LABELS = {
-    "east": "東",
-    "south": "南",
-    "west": "西",
-    "north": "北",
-}
-_SUIT_SUFFIX = {"manzu": "m", "pinzu": "p", "souzu": "s"}
-_HONOR_LABELS = {1: "東", 2: "南", 3: "西", 4: "北", 5: "白", 6: "發", 7: "中"}
-_MELD_LABELS = {
-    "chi": "チー",
-    "pon": "ポン",
-    "daiminkan": "大明槓",
-    "ankan": "暗槓",
-    "kakan": "加槓",
-}
-# recorded `RiichiState`のdisplay label。live GUIの`PublicRiichiStatus`表示と
-# 同じ語彙を使うが、engine statusとrecorded statusを同一semanticsとして
-# 再定義しないよう、対応表はここに閉じる。
-_RIICHI_LABELS = {"none": "", "declared": "宣言中", "accepted": "立直"}
+from lisjong_play.policy_input_board import action_label as _action_label
+from lisjong_play.policy_input_board import seat_index as _seat_index
 
 # `lisjong-play`はこのschemaのconsumerであり、record schema ownerではない。
 LOCAL_GAME_RECORD_SCHEMA_LABEL = (
@@ -86,224 +50,26 @@ SCORING_UNAVAILABLE_NOTE = (
 )
 
 
-class ReplayLoadError(RuntimeError):
+class ReplayLoadError(PolicyInputProjectionError):
     """durable recordをReplay presentationとして安全に開けない場合。
 
     loader rejectionもrecord内部の不整合も、partial replayへ降格させずに
-    ここでfail closedする。
+    ここでfail closedする。共通`PolicyInput`投影が送出する
+    `PolicyInputProjectionError`も、`build_timeline()`境界でこの型へ
+    まとめて変換する。
     """
-
-
-def _seat_index(seat: Any) -> int:
-    """strict loaderが復元済みのtyped `Seat`を0..3のfixed seat indexへ変換する。
-
-    ここはArena / lisjongのtyped contractとして既に検証済みのvalueだけを扱う。
-    """
-    if not isinstance(seat, Seat):
-        raise ReplayLoadError(f"record contains an unusable seat value: {seat!r}")
-    index = int(seat)
-    if not 0 <= index < len(_SEAT_NAMES):
-        raise ReplayLoadError(f"record contains an out-of-range seat: {index}")
-    return index
-
-
-def seat_name(seat: Any) -> str:
-    """半荘中変わらないfixed seatの表示名を返す。"""
-    return _SEAT_NAMES[_seat_index(seat)]
-
-
-def _seat_round_label(index: int, dealer_seat: Any) -> str:
-    dealer = _seat_index(dealer_seat)
-    wind = _SEAT_WIND_LABELS[(index - dealer) % len(_SEAT_NAMES)]
-    return f"{_SEAT_NAMES[index]}（{wind}）"
-
-
-def tile_label(tile: Any) -> str:
-    """recorded `Tile`をcanonical tile labelへ変換する。
-
-    変換結果は必ず既存の牌画像registryが解決できるlabelでなければならない。
-    未知の牌はsilentに別牌へ落とさずfail closedする。
-    """
-    try:
-        tile_type = tile.tile_type
-        category = tile_type.category.value
-        rank = int(tile_type.rank)
-        is_red = bool(tile.is_red)
-    except AttributeError:
-        raise ReplayLoadError(f"record contains an unusable tile value: {tile!r}")
-    if category == "honor":
-        label = _HONOR_LABELS.get(rank, "")
-    else:
-        suffix = _SUIT_SUFFIX.get(category)
-        label = "" if suffix is None else f"{rank}{suffix}{'r' if is_red else ''}"
-    if label not in TILE_ASSET_FILENAMES:
-        raise ReplayLoadError(
-            f"record contains a tile this viewer cannot display: "
-            f"category={category!r} rank={rank!r} is_red={is_red!r}"
-        )
-    return label
-
-
-# 手牌 / 副露の表示順は live GUIのcanonical order(萬子 -> 筒子 -> 索子 -> 字牌)へ揃える。
-_CATEGORY_ORDER = {"manzu": 0, "pinzu": 1, "souzu": 2, "honor": 3}
-
-
-def _tile_sort_key(tile: Any) -> tuple[int, int, bool]:
-    category = tile.tile_type.category.value
-    try:
-        order = _CATEGORY_ORDER[category]
-    except KeyError:
-        raise ReplayLoadError(
-            f"record contains an unsupported tile category: {category!r}"
-        ) from None
-    return (order, int(tile.tile_type.rank), bool(tile.is_red))
-
-
-def _river_tile(discard: Any) -> GuiRiverTile:
-    """recorded discardを河表示へ投影する。
-
-    durable recordの`Discard`は立直宣言牌markerを持たないため、宣言牌を
-    推測せず常にmarkerなしとして扱う。
-    """
-    called_by = discard.called_by
-    return GuiRiverTile(
-        tile=tile_label(discard.tile),
-        is_tsumogiri=bool(discard.tsumogiri),
-        is_riichi_declaration=False,
-        called_by=None if called_by is None else seat_name(called_by),
-    )
-
-
-def _meld_view(meld: Any) -> GuiMeldView:
-    kind = meld.kind.value
-    try:
-        type_label = _MELD_LABELS[kind]
-    except KeyError:
-        raise ReplayLoadError(f"record contains an unsupported meld kind: {kind!r}")
-    from_seat = meld.from_seat
-    called_tile = meld.called_tile
-    return GuiMeldView(
-        type_label=type_label,
-        tiles=tuple(
-            tile_label(tile) for tile in sorted(meld.tiles, key=_tile_sort_key)
-        ),
-        from_seat=None if from_seat is None else seat_name(from_seat),
-        called_tile=None if called_tile is None else tile_label(called_tile),
-    )
-
-
-_CALL_LABELS = {ChiAction: "チー", PonAction: "ポン", DaiminkanAction: "大明槓"}
-
-
-def _action_label(action: Any) -> str:
-    """recorded `InternalAction`を人間向けlabelへ変換する。
-
-    未知のvariantはfail closedし、Pass等へfallbackしない。
-    """
-    if isinstance(action, DiscardAction):
-        suffix = "（ツモ切り）" if action.tsumogiri else ""
-        return f"打牌 {tile_label(action.tile)}{suffix}"
-    if isinstance(action, RiichiAction):
-        return "立直宣言"
-    if isinstance(action, (ChiAction, PonAction, DaiminkanAction)):
-        consumed = " ".join(
-            tile_label(tile)
-            for tile in sorted(action.consumed_tiles, key=_tile_sort_key)
-        )
-        return (
-            f"{_CALL_LABELS[type(action)]} {tile_label(action.called_tile)}"
-            f" / 使用 {consumed} / from {seat_name(action.target)}"
-        )
-    if isinstance(action, AnkanAction):
-        tiles = " ".join(
-            tile_label(tile) for tile in sorted(action.tiles, key=_tile_sort_key)
-        )
-        return f"暗槓 {tiles}"
-    if isinstance(action, KakanAction):
-        return f"加槓 {tile_label(action.added_tile)}"
-    if isinstance(action, RonAction):
-        return (
-            f"ロン {tile_label(action.winning_tile)} / from {seat_name(action.target)}"
-        )
-    if isinstance(action, TsumoAction):
-        return f"ツモ {tile_label(action.winning_tile)}"
-    if isinstance(action, PassAction):
-        return "パス"
-    if isinstance(action, KyuushuKyuuhaiAction):
-        return "九種九牌"
-    raise ReplayLoadError(
-        f"record contains an unsupported action variant: {type(action).__name__}"
-    )
-
-
-def _round_label(round_state: Any) -> str:
-    wind = _ROUND_WIND_LABELS.get(round_state.round_wind.value)
-    if wind is None:
-        raise ReplayLoadError(
-            f"record contains an unsupported round wind: {round_state.round_wind!r}"
-        )
-    return f"{wind}{round_state.hand_number}局 {round_state.honba}本場"
 
 
 def _board_view(policy_input: Any, action_label: str) -> GuiBoardView:
     """recorded `PolicyInput`のpublic stateからviewer-relative盤面を構築する。
 
     viewerはそのdecisionのseatであり、表示するconcealed handはrecordが
-    player-safeに保持しているそのseat自身の手牌だけである。
+    player-safeに保持しているそのseat自身の手牌だけである。投影自体は
+    RiichiLab live sourceと共有する`policy_input_board`が行う。
     """
-    players = tuple(policy_input.players)
-    if len(players) != len(_SEAT_NAMES):
-        raise ReplayLoadError("recorded PolicyInput must contain four seat states")
-    round_state = policy_input.round
-    viewer_index = _seat_index(policy_input.self_seat)
-    dealer_seat = round_state.dealer_seat
-
-    seats = []
-    for index, player in enumerate(players):
-        riichi = player.riichi.value
-        try:
-            riichi_label = _RIICHI_LABELS[riichi]
-        except KeyError:
-            raise ReplayLoadError(
-                f"record contains an unsupported riichi state: {riichi!r}"
-            )
-        seats.append(
-            GuiSeatView(
-                position=_POSITIONS[(index - viewer_index) % len(_POSITIONS)],
-                label=_seat_round_label(index, dealer_seat),
-                score=int(player.score),
-                riichi=riichi_label,
-                melds=tuple(_meld_view(meld) for meld in player.melds),
-                river=tuple(
-                    _river_tile(discard)
-                    for discard in sorted(player.discards, key=lambda item: item.order)
-                ),
-            )
-        )
-
-    own_hand = policy_input.own_hand
-    concealed = sorted(own_hand.concealed_tiles, key=_tile_sort_key)
-    drawn = own_hand.drawn_tile
-    if drawn is not None:
-        for position in range(len(concealed) - 1, -1, -1):
-            if concealed[position] == drawn:
-                concealed.pop(position)
-                break
-        else:
-            raise ReplayLoadError(
-                "recorded drawn tile is absent from the recorded hand"
-            )
-    return GuiBoardView(
-        round_label=_round_label(round_state),
+    return build_policy_input_board_view(
+        policy_input,
         decision_label=f"{seat_name(policy_input.self_seat)} {action_label}",
-        center_detail=(
-            f"供託 {round_state.riichi_sticks}本 / "
-            f"残り山 {round_state.live_wall_tiles_remaining}枚"
-        ),
-        dora_indicators=tuple(tile_label(tile) for tile in round_state.dora_indicators),
-        seats=tuple(seats),
-        hand_tiles=tuple(tile_label(tile) for tile in concealed),
-        drawn_tile=None if drawn is None else tile_label(drawn),
     )
 
 
@@ -521,7 +287,20 @@ def _metadata_text(record: Any) -> str:
 
 
 def build_timeline(record: Any) -> ReplayTimeline:
-    """strict-loaded recordからimmutableなReplay timelineを構築する。"""
+    """strict-loaded recordからimmutableなReplay timelineを構築する。
+
+    共有`PolicyInput`投影が送出する`PolicyInputProjectionError`も、Replay
+    consumerからは従来どおり`ReplayLoadError`として観測される。
+    """
+    try:
+        return _build_timeline(record)
+    except ReplayLoadError:
+        raise
+    except PolicyInputProjectionError as error:
+        raise ReplayLoadError(str(error)) from error
+
+
+def _build_timeline(record: Any) -> ReplayTimeline:
     inspection = record.inspection
     frames: list[ReplayFrame] = []
     group_identities: list[tuple[str, int, int, int]] = []

@@ -27,11 +27,12 @@ from lisjong_engine.tile import TileType as EngineTileType
 
 from lisjong_play import replay_source as replay_source_module
 from lisjong_play.formatting import format_tile, tile_sort_key
+from lisjong_play.policy_input_board import PolicyInputProjectionError
+from lisjong_play.policy_input_board import tile_sort_key as _tile_sort_key
 from lisjong_play.replay_source import (
     SCORING_UNAVAILABLE_NOTE,
     ReplayLoadError,
     _action_label,
-    _tile_sort_key,
     build_timeline,
     load_replay_timeline,
     seat_name,
@@ -500,7 +501,7 @@ class ReplayTypedContractBoundaryTest(unittest.TestCase):
     def test_typed_seat_values_are_required_to_be_seats(self) -> None:
         for value in (0, True, "0", 1.0, None):
             with self.subTest(value=value):
-                with self.assertRaises(ReplayLoadError):
+                with self.assertRaises(PolicyInputProjectionError):
                     seat_name(value)
 
     def test_restored_seat_enum_is_accepted(self) -> None:
@@ -615,7 +616,7 @@ class ReplayActionLabelTest(unittest.TestCase):
         class UnknownFutureAction:
             actor = Seat.SEAT_0
 
-        with self.assertRaises(ReplayLoadError):
+        with self.assertRaises(PolicyInputProjectionError):
             _action_label(UnknownFutureAction())
 
 
