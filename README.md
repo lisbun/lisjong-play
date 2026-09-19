@@ -32,6 +32,7 @@ Python 3.14 is required.
 
 ```powershell
 python -m pip install -e ".[dev]"
+python -m lisjong_arena.environment_verify --project pyproject.toml
 ```
 
 ## Human Play CLI
@@ -139,7 +140,16 @@ The table is oriented with the fixed EAST seat at the bottom so it does not rota
 
 ## RiichiLab live viewer
 
-A live RiichiLab **ranked** hanchan can be watched on the same board while `lisjong-arena` plays it:
+A live RiichiLab **ranked** hanchan can be watched on the same board while `lisjong-arena` plays it.
+
+Before an important smoke or any network run, verify that the installed internal
+VCS revisions match this checkout's exact pins:
+
+```powershell
+python -m lisjong_arena.environment_verify --project pyproject.toml
+```
+
+Then start the live viewer:
 
 ```powershell
 python -m lisjong_play.riichilab_gui --profile lisjong-dev
