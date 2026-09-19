@@ -46,13 +46,14 @@ lisjong-play
 ## Current presentation surfaces
 
 ```text
-Human Play CLI       implemented
-Human Play GUI       implemented
-Replay Viewer        implemented
-Spectator GUI        implemented
+Human Play CLI          implemented
+Human Play GUI          implemented
+Replay Viewer           implemented
+Spectator GUI           implemented
+RiichiLab live viewer   implemented
 ```
 
-The three GUI surfaces are distinct presentation **sources** over one shared board presentation:
+The four GUI surfaces are distinct presentation **sources** over one shared board presentation:
 
 ```text
 Human Play GUI
@@ -63,6 +64,9 @@ Replay Viewer
 
 Spectator GUI
     live AI x4 -> presentation
+
+RiichiLab live viewer
+    live RiichiLab ranked (via lisjong-arena) -> presentation
 ```
 
 They share presentation code where the required facts are equivalent. The existence of multiple consumers does **not** imply a project-wide canonical viewer state, event bus, or generic frontend framework.
@@ -116,19 +120,32 @@ Current Human Play exposes `minimal`, `combined`, and `yakuhai-call` opponent se
 
 ## Shared board presentation
 
-`GuiBoardRenderer` is the shared board-rendering boundary for all three sources.
+`GuiBoardRenderer` is the shared board-rendering boundary for all four sources.
 
 ```text
-Human live source ───┐
-Replay source ───────┼─> GuiBoardRenderer -> Tk board / tile images
-Spectator source ────┘
+Human live source ────────┐
+Replay source ─────────────┼─> GuiBoardRenderer -> Tk board / tile images
+Local Spectator source ────┤
+RiichiLab live source ──────┘
 ```
 
 Every source produces the same `GuiBoardView`; the renderer does not know which source produced it. Rivers, melds, riichi state, scores, round metadata, and dora indicators are drawn once, in one place.
 
-`build_gui_board_view()` takes an optional `orientation_seat`, which chooses only which seat sits at the table's `bottom` position. Human Play and Replay leave it unset and keep their existing viewer-relative orientation. It does not change which concealed hand the view carries.
+Two board projections feed the renderer, one per input contract:
 
-Do not add a generic `ViewerState` abstraction merely because three sources exist. Extract only concrete common presentation semantics demonstrated by real consumers.
+```text
+SeatObservation (lisjong-engine)  -> build_gui_board_view()
+    Human Play / Local Spectator
+
+PolicyInput (lisjong / Arena)     -> build_policy_input_board_view()
+    Replay / RiichiLab live
+```
+
+`policy_input_board` holds the second one. Replay Viewer and the RiichiLab live source consume the same player-safe `PolicyInput` shape, so the tile / meld / river / seat-order / `InternalAction` label conversions live there once instead of being duplicated per source. It projects exactly one `PolicyInput` into exactly one board and takes the heading string from its caller; it does not interpret decision semantics.
+
+`build_gui_board_view()` takes an optional `orientation_seat`, which chooses only which seat sits at the table's `bottom` position. Human Play and Replay leave it unset and keep their existing viewer-relative orientation. It does not change which concealed hand the view carries. `build_policy_input_board_view()` always places the `PolicyInput`'s own `self_seat` at `bottom`, which is the deciding seat for Replay and the bound bot seat for RiichiLab live.
+
+Do not add a generic `ViewerState` abstraction merely because four sources exist. Extract only concrete common presentation semantics demonstrated by real consumers.
 
 ## Replay Viewer boundary
 
@@ -264,6 +281,73 @@ Information flow stays one-way: nothing presented to the spectator is fed back i
 
 Round results and the final scores / ranking reuse `render_round_completion()` and `render_match_completion()`. Spectator does not imitate Human confirmation semantics: results are appended to the progress panel and the spectator uses pause or the boundary pacing to dwell on them. Human Play's next-round confirmation is unchanged. A worker exception is surfaced as an explicit failure and never presented as a completed match.
 
+## RiichiLab live boundary
+
+RiichiLab live viewer is a read-only presentation source over a **live RiichiLab ranked hanchan** executed by `lisjong-arena`. It presents only what lisjong itself can see while playing.
+
+```text
+RiichiLab WebSocket ranked      (lisjong-arena owns transport / protocol)
+        v
+RiichiLabSeatAdapter -> DecisionContext.input (PolicyInput)
+        |-> Policy decision / action send      (authoritative execution path)
+        `-> BoundedRankedPresentationBuffer    (Arena live presentation seam)
+                v
+        RiichiLabLiveController                Tk-free display cursor
+                v
+        policy_input_board -> GuiBoardRenderer
+                v
+        Tk presentation
+```
+
+### Arena live presentation seam
+
+The producer boundary is the supported Arena seam added for this viewer (`lisjong-arena` PR #274, Arena main `60cf4df`): `BoundedRankedPresentationBuffer`, `RankedDecisionPresentation`, `RankedCompletionPresentation`, `RankedFailurePresentation`, and the optional `presentation=` argument on `run_ranked_game()` / `acquire_ranked_game_record()`.
+
+`lisjong-play` is a consumer of that seam only. It does not parse raw RiichiLab `request_action` JSON or base64 `Observation`, and it does not reimplement Arena's profile / credential resolution, WebSocket transport, ranked protocol, retry / reconnect, or durable record writer. Profile and credential resolution, the profile's `policy_factory`, ranked execution, and durable acquisition are called through Arena's public contract. The bot token is read inside the worker, passed straight to Arena, and never placed on a presentation value, a status snapshot, a log line, an exception message, or a record.
+
+### RiichiLab live display control
+
+**Pause semantics differ from Local Spectator, and the difference is the point.**
+
+```text
+Local Spectator Pause
+    local engine execution gate; the next selector decision does not run
+
+RiichiLab live Pause
+    display cursor only; ranked execution and Policy decisions always progress
+```
+
+RiichiLab ranked has a server-side response time budget, so GUI pause, stepping, rendering cost, and window operations must never flow back into Policy timing or the WebSocket response path. `SpectatorControl` is therefore **not** reused: it is a worker gate, and reusing it here would change its meaning.
+
+- **Follow Live** renders the newest decision frame. A drain carrying several frames renders only the latest, because the board is cumulative snapshot state rather than a delta.
+- **Pause** freezes the display cursor alone. The Arena buffer is still drained on every poll, so terminal facts and Arena-side coalescing counts keep arriving while paused.
+- **Step** is valid only while paused and advances exactly one already-received frame. It sends nothing to the ranked worker.
+- **Follow Live / Resume** jumps to the newest retained frame and returns to following.
+
+The controller never signals the worker; `detach()` is the only call that touches the Arena buffer's state.
+
+### RiichiLab live bounded history
+
+The GUI-side pending history has its own explicit finite capacity (`DEFAULT_PENDING_FRAME_CAPACITY`), so a long pause cannot grow it without bound. When it is full the oldest undisplayed snapshot is evicted, and the count of frames that were received but never displayed is shown in the status line. Arena's own `RankedPresentationBatch.coalesced_decisions` is added into that same count, so overflow on either side stays visible. Retaining every decision forever is not a requirement of this viewer.
+
+Terminal facts are never dropped by that bound: completion and failure are held outside the frame capacity and surfaced even if the display stayed paused.
+
+### RiichiLab live information boundary
+
+The viewer shows only the bound bot seat's player-visible state, projected from the same `PolicyInput` that Arena handed to the Policy. It does not infer opponents' concealed hands, merge several `PolicyInput` values into a synthetic omniscient state, reconstruct wall or dead-wall contents, or recompute legality, scoring, progression, shanten, or ukeire. Nothing presented here is fed back into Policy-visible input.
+
+Round-result detail that the RiichiLab protocol and the Arena seam do not provide exactly — yaku, han, fu, the winning hand — is not invented. Final rank is not provided by the seam either, so the viewer shows final scores without deriving a placement. Arena guarantees exactly one terminal fact per run, and a failure fact carries only an exception type name, which the viewer presents as a failure rather than a completed match.
+
+### RiichiLab live lifecycle
+
+Arena ranked execution and Policy execution run on a worker thread; Tk widgets are touched only on the main thread, which is also the only thread that drains the Arena buffer.
+
+**Closing the window does not abort the ranked game.** Close detaches the presentation buffer and destroys the window; it sends no cancel or disconnect to the worker. The worker is deliberately **not** a daemon thread, and `launch_riichilab_gui()` joins it after `mainloop()` returns, so process lifetime extends to ranked completion instead of tearing down the WebSocket mid-hanchan. Publishing to a detached buffer is a no-op, so the run finishes under Arena's authoritative lifecycle.
+
+Durable record acquisition stays Arena-owned: with `--record-dir` the viewer calls `acquire_ranked_game_record()` and shows the returned record identity. Live presentation and the durable record are independent consumers of the same run, and the viewer never reads or writes record bytes.
+
+The initial scope is exactly one ranked hanchan. Multiple games, requeue, reconnect, attaching to an already-running Arena process, and IPC are out of scope.
+
 ## Non-goals of the current architecture
 
 - project-wide canonical `GameRecord`
@@ -276,5 +360,7 @@ Round results and the final scores / ranking reuse `render_round_completion()` a
 - rule selection, multiplayer, save/resume, or AI takeover as implied current features
 - per-seat arbitrary Policy league editor
 - durable persistence or Arena evaluation from the live Spectator source
+- attaching to an already-running Arena ranked process, IPC, or a server-side RiichiLab spectator API
+- an omniscient RiichiLab viewer, or viewer-side action override / human takeover
 
 Concrete future needs should be handled by bounded Issues and promoted into this document only when they become current architecture.
