@@ -177,6 +177,20 @@ Round boundaries use recorded round identity, while round results use the record
 
 `ReplayController` owns cursor, playback state, and speed. Tk widget state is not the source of truth. Playback pacing changes presentation delay only; it never changes the visited decision sequence.
 
+### Static HTML Replay export
+
+`lisjong_play.replay_html` writes the same `ReplayTimeline` as one self-contained HTML file for browser viewing. It is a second presentation of the Replay source, not a new record format or frontend framework:
+
+```text
+ReplayTimeline -> ReplayController (per-frame position / round targets / speed intervals)
+               -> JSON payload + used vendored tile PNGs (data URIs) -> single HTML file
+```
+
+- The payload carries only values already in `ReplayTimeline`; the record path and other local environment details are not embedded.
+- Round navigation targets, position text, and speed intervals are precomputed with `ReplayController`, so the page script only moves a cursor and draws. It never computes legality, scoring, or progression.
+- The page references no external resource (a `default-src 'none'` CSP is set). Record strings are escaped inside the JSON payload and inserted into the DOM as text only.
+- Strict-load failures and unknown tile labels fail closed without writing a file. An existing output file is replaced only with `--overwrite`.
+
 ### Replay information boundary
 
 The viewer presents recorded facts only.
