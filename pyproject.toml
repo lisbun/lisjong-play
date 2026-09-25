@@ -23,6 +23,7 @@ dev = ["ruff==0.16.0"]
 lisjong-play = "lisjong_play.cli:main"
 lisjong-play-gui = "lisjong_play.gui:main"
 lisjong-play-replay = "lisjong_play.replay_gui:main"
+lisjong-play-replay-html = "lisjong_play.replay_html:main"
 lisjong-play-spectator = "lisjong_play.spectator_gui:main"
 lisjong-play-riichilab = "lisjong_play.riichilab_gui:main"
 

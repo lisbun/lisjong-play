@@ -100,6 +100,17 @@ The record does not currently provide authoritative winning tile / winning hand 
 
 The Replay Viewer never recomputes legality, scoring, yaku / fu, round progression, hidden hands, shanten, or ukeire, and it never starts an engine game or Policy while replaying a record.
 
+### Static HTML Replay
+
+The same record can be exported as one self-contained HTML file that opens in any browser without Python, a desktop display, or network access:
+
+```powershell
+python -m lisjong_play.replay_html path\to\record-bundle -o replay.html
+lisjong-play-replay-html path\to\record-bundle
+```
+
+Without `-o`, the file is written to `<record directory name>.html` in the current directory. An existing file is not replaced unless `--overwrite` is given. The page has the same navigation as the Tk viewer (plus a position slider and ←/→, PageUp/PageDown, Home, Space shortcuts) and shows exactly the facts the Tk viewer shows; a record the strict loader rejects produces no file.
+
 ## Spectator GUI
 
 A live AI x4 hanchan can be watched without any human seat:

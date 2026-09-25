@@ -88,6 +88,14 @@ class ReplayController:
         self._index = bounded
         return True
 
+    def to_index(self, index: int) -> bool:
+        """recorded frame indexへ直接移動する。範囲外はfail closedする。"""
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise ReplayControlError(f"unsupported replay frame index: {index!r}")
+        if not 0 <= index < len(self._timeline.frames):
+            raise ReplayControlError(f"replay frame index out of range: {index!r}")
+        return self._move_to(index)
+
     def to_first(self) -> bool:
         return self._move_to(0)
 
