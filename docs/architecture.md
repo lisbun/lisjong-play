@@ -50,7 +50,7 @@ Human Play CLI          implemented
 Human Play GUI          implemented
 Replay Viewer           implemented
 Spectator GUI           implemented
-RiichiLab live viewer   implemented
+RiichiLab live viewer   implemented (Tk and browser)
 ```
 
 The four GUI surfaces are distinct presentation **sources** over one shared board presentation:
@@ -361,6 +361,24 @@ Arena ranked execution and Policy execution run on a worker thread; Tk widgets a
 Durable record acquisition stays Arena-owned: with `--record-dir` the viewer calls `acquire_ranked_game_record()` and shows the returned record identity. Live presentation and the durable record are independent consumers of the same run, and the viewer never reads or writes record bytes.
 
 The initial scope is exactly one ranked hanchan. Multiple games, requeue, reconnect, attaching to an already-running Arena process, and IPC are out of scope.
+
+### RiichiLab live browser presentation
+
+`lisjong_play.riichilab_html` is a second presentation of the same RiichiLab live source, next to the Tk viewer. It is not a new source and it does not change the Arena seam or `RiichiLabLiveController` semantics:
+
+```text
+Arena ranked worker (non-daemon)
+    -> BoundedRankedPresentationBuffer
+    -> RiichiLabLiveController.ingest()      server thread only
+    -> GET /state JSON -> browser polling -> html_board createBoardRenderer()
+```
+
+- **Server boundary.** A single-threaded stdlib `HTTPServer` bound to `127.0.0.1` only; the bind address is an invariant, not an option. Only the server thread touches the controller, which is the same serialization the Tk main thread provides. `Host` must be the loopback address or `localhost` with the bound port, and `POST /control` requires `application/json` and, when an `Origin` is sent, the same origin. Tile images are served only through the canonical tile-label mapping. Responses carry a `default-src 'none'` CSP that allows only same-origin fetches and images.
+- **Start boundary.** The ranked run is started by the command only, after the port is bound. The page has no endpoint that starts, restarts, or signals the ranked run; its controls are exactly `pause`, `step`, and `follow` on the display cursor, and unknown commands are rejected.
+- **Lifecycle.** Ctrl+C stops the server, detaches the presentation buffer, and joins the non-daemon worker, so the hanchan finishes under Arena's lifecycle exactly as when the Tk window is closed. A browser tab has no lifecycle effect.
+- **Information.** `/state` carries the same player-visible frame, counters, terminal facts, and secret-safe worker status as the Tk viewer. The token is never placed on a payload, the page, or console output.
+
+`lisjong_play.html_board` holds the HTML board markup / CSS / drawing script shared by this page and the static HTML Replay export, in the same way `GuiBoardRenderer` is shared by the Tk surfaces. Only the tile source differs (data URIs in the static file, `/tiles/...` on the local server).
 
 ## Non-goals of the current architecture
 

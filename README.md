@@ -197,6 +197,24 @@ Final scores are shown as Arena reported them. Final rank, yaku, han, fu, and th
 
 **Closing the window does not abort the game.** Close detaches the presentation only; the ranked worker is not a daemon thread and is joined after the Tk mainloop exits, so the hanchan finishes under Arena's lifecycle instead of being disconnected mid-game.
 
+### RiichiLab live viewer in a browser
+
+The same live ranked hanchan can be watched in a web browser instead of a Tk window:
+
+```powershell
+python -m lisjong_play.riichilab_html --profile lisjong-dev --open-browser
+lisjong-play-riichilab-html --profile lisjong-dev --port 8765
+lisjong-play-riichilab-html `
+  --profile lisjong-dev `
+  --record-dir C:\Dev\lisjong-artifacts\riichilab
+```
+
+The command starts exactly one ranked hanchan and serves the viewer at `http://127.0.0.1:<port>/` (default port 8765; `--port 0` picks a free port). The page has no control that starts a game: the ranked run is started only by this command. The server binds to `127.0.0.1` only and has no option to listen on another interface; requests with a foreign `Host`, and control requests that are not same-origin JSON, are rejected.
+
+The page reuses the Tk viewer's live source and the static HTML Replay's board drawing, so it shows the same facts with the same controls: **表示のみ一時停止**, **ステップ**, and **最新へ追従** move the display cursor only and never reach the ranked worker. The page polls the local server; while no browser is open, Arena's bounded buffer coalesces older snapshots and the viewer reports them as not displayed, without affecting the ranked run.
+
+**Closing the tab or pressing Ctrl+C does not abort the game.** Ctrl+C stops the local server and detaches the presentation; the process then waits until the ranked hanchan finishes under Arena's lifecycle. After the game ends the server keeps serving the final result until Ctrl+C.
+
 ## Tile images
 
 GUI tile images are vendored PNGs from [FluffyStuff/riichi-mahjong-tiles](https://github.com/FluffyStuff/riichi-mahjong-tiles) under public-domain / CC0 1.0 terms. They are bundled under `src/lisjong_play/assets/tiles/` and resolved by canonical tile label through `lisjong_play.tile_images`; no runtime network access is required.
@@ -205,7 +223,7 @@ See `src/lisjong_play/assets/tiles/THIRD_PARTY_NOTICE.md` for the exact source r
 
 The shared renderer uses a `BoardTileImages` bundle with separate registries for the Human hand, board-side meld / dora tiles, river tiles, and desaturated tsumogiri river tiles. The Human hand is largest because it is the click target; melds and dora indicators are smaller; river tiles are smallest so six tiles per row remain compact. Tsumogiri is shown by graying the tile face rather than by a text marker, while the CLI keeps its `*` marker.
 
-The four seats are positioned around the measured center block rather than in stretched grid cells. Each seat keeps its name, score, and exposed melds on the outer side and faces its river toward the center; rivers grow away from the center so they do not cover round information or the Human hand. Live Human Play, Replay Viewer, Spectator GUI, and the RiichiLab live viewer share this layout and tile-image infrastructure.
+The four seats are positioned around the measured center block rather than in stretched grid cells. Each seat keeps its name, score, and exposed melds on the outer side and faces its river toward the center; rivers grow away from the center so they do not cover round information or the Human hand. Live Human Play, Replay Viewer, Spectator GUI, and the RiichiLab live viewer share this layout and tile-image infrastructure. The static HTML Replay and the browser RiichiLab live viewer share one HTML board drawing (`lisjong_play.html_board`) that follows the same layout.
 
 The table composition is informed by [MJX's observation visualizer](https://github.com/mjx-project/mjx/tree/master/mjx/visualizer), but no MJX code, font, or artwork is copied or bundled.
 

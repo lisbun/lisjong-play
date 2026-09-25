@@ -26,6 +26,7 @@ lisjong-play-replay = "lisjong_play.replay_gui:main"
 lisjong-play-replay-html = "lisjong_play.replay_html:main"
 lisjong-play-spectator = "lisjong_play.spectator_gui:main"
 lisjong-play-riichilab = "lisjong_play.riichilab_gui:main"
+lisjong-play-riichilab-html = "lisjong_play.riichilab_html:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

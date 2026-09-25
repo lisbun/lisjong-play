@@ -10,25 +10,30 @@ navigation semantics(前局 / 次局の移動先、位置表示、速度ごと�
 """
 
 import argparse
-import base64
-import json
 import os
 import stat
 import tempfile
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from lisjong_play.gui_board import GUI_RIVER_LEGEND, RIVER_ROW_SIZE
-from lisjong_play.gui_model import GuiBoardView
+from lisjong_play.html_board import (
+    BOARD_CSS,
+    BOARD_MARKUP,
+    BOARD_SCRIPT,
+    board_tile_labels,
+    script_safe_json,
+    tile_data_uris,
+)
 from lisjong_play.replay_controller import SPEED_CHOICES, ReplayController
 from lisjong_play.replay_source import (
     ReplayLoadError,
     ReplayTimeline,
     load_replay_timeline,
 )
-from lisjong_play.tile_images import TileImageAssetError, tile_asset_traversable
+from lisjong_play.tile_images import TileImageAssetError
 
 PAYLOAD_ELEMENT_ID = "replay-data"
 _DEFAULT_OUTPUT_NAME = "replay.html"
@@ -38,39 +43,12 @@ class ReplayHtmlOutputError(RuntimeError):
     """HTMLを書き出し先へ安全に作成できない場合。"""
 
 
-def _board_tile_labels(board: GuiBoardView) -> Iterable[str]:
-    yield from board.dora_indicators
-    yield from board.hand_tiles
-    if board.drawn_tile is not None:
-        yield board.drawn_tile
-    for seat in board.seats:
-        for meld in seat.melds:
-            yield from meld.tiles
-            if meld.called_tile is not None:
-                yield meld.called_tile
-        for cell in seat.river:
-            yield cell.tile
-
-
 def collect_tile_labels(timeline: ReplayTimeline) -> tuple[str, ...]:
     """timelineの盤面が実際に参照するcanonical tile labelをsortして返す。"""
     labels: set[str] = set()
     for frame in timeline.frames:
-        labels.update(_board_tile_labels(frame.board))
+        labels.update(board_tile_labels(frame.board))
     return tuple(sorted(labels))
-
-
-def tile_data_uris(labels: Iterable[str]) -> dict[str, str]:
-    """canonical tile label -> vendored PNGのdata URI。
-
-    未知labelや欠落assetは`TileImageAssetError`のままfail closedする。
-    """
-    uris: dict[str, str] = {}
-    for label in labels:
-        data = tile_asset_traversable(label).read_bytes()
-        encoded = base64.b64encode(data).decode("ascii")
-        uris[label] = f"data:image/png;base64,{encoded}"
-    return uris
 
 
 def build_replay_payload(timeline: ReplayTimeline) -> dict[str, Any]:
@@ -127,27 +105,17 @@ def build_replay_payload(timeline: ReplayTimeline) -> dict[str, Any]:
     }
 
 
-def _script_safe_json(value: Any) -> str:
-    """`<script>`内へ置いてもmarkupとして解釈されないJSON文字列。"""
-    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    return (
-        text.replace("&", "\\u0026")
-        .replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-        .replace(" ", "\\u2028")
-        .replace(" ", "\\u2029")
-    )
-
-
 def render_replay_html(timeline: ReplayTimeline) -> str:
     """timelineから外部resourceを参照しない単一HTML文字列を生成する。"""
     payload = build_replay_payload(timeline)
     payload["tiles"] = tile_data_uris(collect_tile_labels(timeline))
     return (
-        _HTML_TEMPLATE.replace("__CSS__", _CSS)
-        .replace("__SCRIPT__", _SCRIPT)
+        _HTML_TEMPLATE.replace("__BOARD__", BOARD_MARKUP)
+        .replace("__HAND_CAPTION__", _HAND_CAPTION)
+        .replace("__CSS__", BOARD_CSS + _CSS)
+        .replace("__SCRIPT__", BOARD_SCRIPT + _SCRIPT)
         .replace("__PAYLOAD_ID__", PAYLOAD_ELEMENT_ID)
-        .replace("__PAYLOAD__", _script_safe_json(payload))
+        .replace("__PAYLOAD__", script_safe_json(payload))
     )
 
 
@@ -261,17 +229,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     <strong>lisjong 牌譜Replay</strong>
     <span id="status"></span>
   </header>
-  <section id="table" class="table">
-    <div class="seat pos-top" data-position="top"></div>
-    <div class="seat pos-left" data-position="left"></div>
-    <div id="center" class="center"></div>
-    <div class="seat pos-right" data-position="right"></div>
-    <div class="seat pos-bottom" data-position="bottom"></div>
-  </section>
-  <section class="hand-box">
-    <div class="caption">このdecision seatの手牌（recordが保持する範囲）</div>
-    <div id="hand" class="hand"></div>
-  </section>
+  __BOARD__
   <nav class="controls">
     <button type="button" data-nav="first">|&lt; 先頭</button>
     <button type="button" data-nav="previous_round">&lt;&lt; 前局</button>
@@ -295,67 +253,14 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
+_HAND_CAPTION = "このdecision seatの手牌（recordが保持する範囲）"
+
 _CSS = """
-:root { color-scheme: light; --felt: #176b4d; --felt-text: #f4f1e6;
-  --seat-info: #0d4634; --tsumogiri: #c2c2c2; }
-* { box-sizing: border-box; }
-body { margin: 0; background: #f3f3f0; color: #1d1d1b;
-  font-family: system-ui, "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif; }
-main { max-width: 1180px; margin: 0 auto; padding: 12px 16px; }
-header { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap;
-  margin-bottom: 8px; }
-.table { display: grid; grid-template-columns: 1fr auto 1fr;
-  grid-template-areas: ". top ." "left center right" ". bottom .";
-  gap: 6px 24px; align-items: center; min-height: 520px; padding: 12px;
-  background: var(--felt); color: var(--felt-text); border-radius: 6px;
-  overflow-x: auto; }
-.pos-top { grid-area: top; justify-self: center; align-self: end; }
-.pos-bottom { grid-area: bottom; justify-self: center; align-self: start; }
-.pos-left { grid-area: left; justify-self: end; }
-.pos-right { grid-area: right; justify-self: start; }
-.center { grid-area: center; text-align: center; font-size: 13px; }
-.center .round { font-weight: bold; font-size: 16px; }
-.seat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.pos-left, .pos-right { align-items: flex-start; }
-.status { background: var(--seat-info); font-size: 12px; font-weight: bold;
-  padding: 0 6px; white-space: nowrap; }
-.body { display: flex; gap: 10px; align-items: flex-start; }
-.melds { display: flex; flex-direction: column; gap: 2px; }
-.meld-caption { font-size: 10px; }
-.tiles { display: flex; }
-.river { display: flex; flex-direction: column; gap: 1px; }
-.river-row { display: flex; gap: 2px; }
-.river-empty { font-size: 12px; }
-.cell { display: flex; flex-direction: column; align-items: center; }
-.cell .mark { font-size: 9px; line-height: 1.1; }
-.tile { display: block; background: #fff; }
-.tile.small { width: 24px; height: 32px; }
-.tile.large { width: 36px; height: 48px; }
-.tsumogiri-face { background: var(--tsumogiri); }
-.tsumogiri-face img { mix-blend-mode: multiply; }
-.tile-text { display: inline-block; min-width: 24px; padding: 2px; background: #fff;
-  color: #1d1d1b; font-size: 12px; text-align: center; }
-.dora { display: flex; gap: 3px; justify-content: center; align-items: center;
-  margin: 2px 0; }
-.hand-box, .info-box { margin-top: 8px; padding: 6px 8px; background: #fff;
-  border: 1px solid #d6d6d0; border-radius: 6px; }
-.caption { font-size: 12px; color: #55554f; margin-bottom: 4px; }
-.hand { display: flex; gap: 2px; justify-content: center; align-items: center;
-  min-height: 52px; flex-wrap: wrap; }
-.hand .separator { width: 1px; align-self: stretch; background: #999; margin: 0 6px; }
-.controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
-  margin-top: 8px; }
-.controls button { padding: 6px 10px; font-size: 14px; }
 .controls .play { margin-left: 10px; }
 .controls input[type=range] { flex: 1 1 160px; }
-.position, .legend { margin-top: 4px; font-size: 13px; white-space: pre-wrap; }
-.legend { color: #55554f; }
-pre { margin: 0; max-height: 280px; overflow: auto; white-space: pre-wrap;
-  font-size: 13px; }
 """
 
 _SCRIPT = """
-"use strict";
 (() => {
   const data = JSON.parse(
     document.getElementById("__PAYLOAD_ID__").textContent);
@@ -367,110 +272,13 @@ _SCRIPT = """
   let speedIndex = Math.max(0,
     data.speeds.findIndex((s) => s.label === data.default_speed_label));
 
-  function el(tag, className, text) {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined) node.textContent = text;
-    return node;
-  }
-
-  function tile(label, size) {
-    const uri = data.tiles[label];
-    if (uri === undefined) return el("span", "tile-text", label);
-    const img = el("img", "tile " + size);
-    img.src = uri;
-    img.alt = label;
-    img.title = label;
-    return img;
-  }
-
-  function meldCaption(meld) {
-    return meld.from_seat === null
-      ? meld.type_label : meld.type_label + "→" + meld.from_seat;
-  }
-
-  function riverMark(cell) {
-    let text = cell.is_riichi_declaration ? "[立]" : "";
-    if (cell.called_by !== null) text += "→" + cell.called_by;
-    return text;
-  }
-
-  function renderSeat(box, seat) {
-    box.replaceChildren();
-    let status = seat.label + "  " + seat.score + "点";
-    if (seat.riichi) status += " / " + seat.riichi;
-    const statusNode = el("div", "status", status);
-
-    const melds = el("div", "melds");
-    for (const meld of seat.melds) {
-      const group = el("div", "meld");
-      group.append(el("div", "meld-caption", meldCaption(meld)));
-      const row = el("div", "tiles");
-      for (const label of meld.tiles) row.append(tile(label, "small"));
-      group.append(row);
-      melds.append(group);
-    }
-
-    const river = el("div", "river");
-    if (seat.river.length === 0) {
-      river.append(el("div", "river-empty", "河 -"));
-    }
-    for (let start = 0; start < seat.river.length;
-         start += data.river_row_size) {
-      const row = el("div", "river-row");
-      for (const cell of seat.river.slice(start, start + data.river_row_size)) {
-        const node = el("div", "cell");
-        const face = el("div", cell.is_tsumogiri ? "tsumogiri-face" : "");
-        face.append(tile(cell.tile, "small"));
-        node.append(face);
-        const mark = riverMark(cell);
-        if (mark) node.append(el("div", "mark", mark));
-        row.append(node);
-      }
-      river.append(row);
-    }
-
-    // 外周側から中央側へ text情報 -> 副露 -> 河 (Tk rendererと同じ並び)。
-    const body = el("div", "body");
-    if (seat.position === "left") body.append(melds, river);
-    else body.append(river, melds);
-    if (seat.position === "bottom") box.append(body, statusNode);
-    else box.append(statusNode, body);
-  }
-
-  function renderCenter(board) {
-    const center = document.getElementById("center");
-    center.replaceChildren();
-    center.append(el("div", "round", board.round_label));
-    center.append(el("div", "detail", board.center_detail));
-    const dora = el("div", "dora");
-    dora.append(el("span", "", "ドラ"));
-    if (board.dora_indicators.length === 0) dora.append(el("span", "", "なし"));
-    for (const label of board.dora_indicators) dora.append(tile(label, "small"));
-    center.append(dora);
-    center.append(el("div", "decision", "判断: " + board.decision_label));
-  }
-
-  function renderHand(board) {
-    const hand = document.getElementById("hand");
-    hand.replaceChildren();
-    for (const label of board.hand_tiles) hand.append(tile(label, "large"));
-    if (board.drawn_tile !== null) {
-      hand.append(el("span", "separator"));
-      hand.append(tile(board.drawn_tile, "large"));
-    }
-  }
+  const board = createBoardRenderer(
+    (label) => data.tiles[label], data.river_row_size);
+  const el = board.el;
 
   function render() {
     const frame = frames[index];
-    const board = frame.board;
-    const byPosition = {};
-    for (const seat of board.seats) byPosition[seat.position] = seat;
-    for (const box of document.querySelectorAll(".seat")) {
-      renderSeat(box, byPosition[box.dataset.position]);
-    }
-    renderCenter(board);
-    renderHand(board);
+    board.render(frame.board);
     document.getElementById("position").textContent = frame.position_text;
     document.getElementById("info").textContent = [
       data.rounds[frame.round_index].result_text,
