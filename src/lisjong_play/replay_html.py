@@ -562,6 +562,8 @@ _SCRIPT = """
       PageUp: "previous_round", PageDown: "next_round", Home: "first",
     };
     if (event.key === " ") {
+      // focus中のbuttonはSpaceでそのbutton自身を押せるよう、既定動作に任せる。
+      if (event.target instanceof HTMLButtonElement) return;
       event.preventDefault();
       togglePlayback();
     } else if (keys[event.key] !== undefined) {
