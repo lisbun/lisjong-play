@@ -230,7 +230,8 @@ lisjong-play-riichilab-html `
 
 - Profile / credential resolution, retries, durable records, the stdout summary, and the exit code all come from Arena. The summary lines keep the format Arena's AWS verifier parses, and the viewer prints no line that collides with them.
 - Arena opens a fresh presentation buffer for every game attempt. The viewer switches to the newest game only while following. A paused display stays on its game until **最新へ追従**. The previous game's final scores or failure type stay listed. Games that were never displayed are counted.
-- `--duration-seconds` and `--games` are accepted only with `--continuous`.
+- `--duration-seconds`, `--games`, and `--stop-file` are accepted only with `--continuous`.
+- `--stop-file PATH` is passed unchanged to Arena's `--stop-file` (`lisbun/lisjong-arena#383`). Once `PATH` exists, Arena finishes the running hanchan and starts no new one. The viewer never reads, writes, or polls the file; the stop semantics belong to Arena. Arena's AWS launcher uses this option for `-UntilStopped` spectating runs.
 - When the run ends, the server closes and the command exits with Arena's exit code.
 - **Ctrl+C** detaches the presentation and asks Arena to stop gracefully: the running hanchan finishes, and no new hanchan starts.
 
