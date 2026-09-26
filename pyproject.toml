@@ -13,7 +13,7 @@ authors = [{ name = "lisbun" }]
 dependencies = [
     "lisjong @ git+https://github.com/lisbun/lisjong.git@2a9debebdbbe4d10841fa4371a6cf6bf19ce9de1",
     "lisjong-engine @ git+https://github.com/lisbun/lisjong-engine.git@8735e89e1aea000ab59368d0368d476787827741",
-    "lisjong-arena @ git+https://github.com/lisbun/lisjong-arena.git@47175b4cb109bac3b0950f70e0dfb6f15228c471",
+    "lisjong-arena @ git+https://github.com/lisbun/lisjong-arena.git@07e1277f894c0d31d1d20f8d00453f841bad392a",
 ]
 
 [project.optional-dependencies]
