@@ -215,6 +215,27 @@ The page reuses the Tk viewer's live source and the static HTML Replay's board d
 
 **Closing the tab or pressing Ctrl+C does not abort the game.** Ctrl+C stops the local server and detaches the presentation; the process then waits until the ranked hanchan finishes under Arena's lifecycle. After the game ends the server keeps serving the final result until Ctrl+C.
 
+#### Continuous mode
+
+`--continuous` runs Arena's continuous ranked runner (`run_continuous_ranked_cli`) in the same process and shows each hanchan as it starts:
+
+```powershell
+lisjong-play-riichilab-html `
+  --profile lisjong-dev `
+  --continuous `
+  --duration-seconds 3600 `
+  --record-dir C:\Dev\lisjong-artifacts\riichilab `
+  --port 8765
+```
+
+- Profile / credential resolution, retries, durable records, the stdout summary, and the exit code all come from Arena. The summary lines keep the format Arena's AWS verifier parses, and the viewer prints no line that collides with them.
+- Arena opens a fresh presentation buffer for every game attempt. The viewer switches to the newest game only while following. A paused display stays on its game until **最新へ追従**. The previous game's final scores or failure type stay listed. Games that were never displayed are counted.
+- `--duration-seconds` and `--games` are accepted only with `--continuous`.
+- When the run ends, the server closes and the command exits with Arena's exit code.
+- **Ctrl+C** detaches the presentation and asks Arena to stop gracefully: the running hanchan finishes, and no new hanchan starts.
+
+On AWS, Arena's RiichiLab launcher can run this mode on an EC2 instance that allows no inbound connections, and you can watch it from your PC through SSM port forwarding (`lisbun/lisjong-arena#381`). Use the same local and remote port number, because the viewer accepts only its own `Host`.
+
 ## Tile images
 
 GUI tile images are vendored PNGs from [FluffyStuff/riichi-mahjong-tiles](https://github.com/FluffyStuff/riichi-mahjong-tiles) under public-domain / CC0 1.0 terms. They are bundled under `src/lisjong_play/assets/tiles/` and resolved by canonical tile label through `lisjong_play.tile_images`; no runtime network access is required.

@@ -18,6 +18,12 @@ Arena ranked worker (別thread)
     -> RiichiLabFrame -> GuiBoardRenderer
 ```
 
+continuous mode(`lisbun/lisjong-play#48`)ではArenaの
+`ContinuousRankedPresentationFeed`がgame attemptごとに新しいbufferを開き、
+`RiichiLabContinuousController`が最新gameのbufferへ表示を切り替える。
+ranked実行・profile / credential解決・summary出力はArenaの
+`run_continuous_ranked_cli()`へ委譲し、ここで複製しない。
+
 timing boundary
 ---------------
 このsourceのPause / Step / Follow Liveは**presentation cursorだけ**を操作する。
@@ -47,6 +53,7 @@ from typing import Any
 from lisjong_arena.riichilab.cli import resolve_ranked_record_path
 from lisjong_arena.riichilab.live_presentation import (
     BoundedRankedPresentationBuffer,
+    ContinuousRankedPresentationFeed,
     RankedCompletionPresentation,
     RankedDecisionPresentation,
     RankedFailurePresentation,
@@ -72,6 +79,10 @@ __all__ = [
     "DEFAULT_PENDING_FRAME_CAPACITY",
     "PROFILE_NAMES",
     "RiichiLabCompletion",
+    "RiichiLabContinuousController",
+    "RiichiLabContinuousStatus",
+    "RiichiLabContinuousViewState",
+    "RiichiLabGameResult",
     "RiichiLabFailure",
     "RiichiLabFrame",
     "RiichiLabLiveController",
@@ -81,6 +92,7 @@ __all__ = [
     "RiichiLabWorkerStatus",
     "build_decision_frame",
     "resolve_record_path",
+    "run_riichilab_continuous_worker",
     "run_riichilab_worker",
 ]
 
@@ -512,3 +524,232 @@ def run_riichilab_worker(
             record_identity=record_identity,
         )
     )
+
+
+@dataclass(frozen=True)
+class RiichiLabGameResult:
+    """表示を終えたgame attemptのterminal fact。
+
+    Arenaが報告したcompletion / failureだけを持ち、順位等を推測しない。
+    terminal factが届く前にrunが終わった場合は両方`None`のままである。
+    """
+
+    game_ordinal: int
+    completion: RiichiLabCompletion | None
+    failure: RiichiLabFailure | None
+
+
+@dataclass(frozen=True)
+class RiichiLabContinuousViewState:
+    """continuous modeで描画する現在のpresentation状態のimmutable snapshot。"""
+
+    game_ordinal: int | None
+    latest_game_ordinal: int | None
+    view: RiichiLabViewState | None
+    last_result: RiichiLabGameResult | None
+    skipped_games: int
+
+
+class RiichiLabContinuousController:
+    """Arena continuous feedの上に載る、presentation-onlyな表示cursor。
+
+    表示中gameの`RiichiLabLiveController`へPause / Step / Followを委譲する。
+    Arena feedの最新gameが変わったら、follow中に限り、手元の前game bufferを
+    最終drainしてterminal factを`last_result`へ残してから新gameへ切り替える。
+    Arenaは前gameのterminal factをpublishした後にだけ次gameのbufferを開く
+    ため、この順序で取りこぼしは起きない。
+
+    表示停止中はgameを切り替えない(停止中の盤面を差し替えない)。その間の
+    新game bufferはArena側のbounded capacityでcoalesceされる。一度も表示
+    されずに次のgameへ進んだgame attemptは`skipped_games`へ数える。
+    """
+
+    __slots__ = (
+        "_feed",
+        "_capacity",
+        "_controller",
+        "_game_ordinal",
+        "_latest_game_ordinal",
+        "_last_result",
+        "_skipped_games",
+    )
+
+    def __init__(
+        self,
+        feed: ContinuousRankedPresentationFeed,
+        *,
+        capacity: int = DEFAULT_PENDING_FRAME_CAPACITY,
+    ) -> None:
+        if not isinstance(feed, ContinuousRankedPresentationFeed):
+            raise TypeError("feed must be a ContinuousRankedPresentationFeed")
+        if isinstance(capacity, bool) or not isinstance(capacity, int):
+            raise TypeError("capacity must be an int")
+        if capacity < 1:
+            raise ValueError("capacity must be a positive int")
+        self._feed = feed
+        self._capacity = capacity
+        self._controller: RiichiLabLiveController | None = None
+        self._game_ordinal: int | None = None
+        self._latest_game_ordinal: int | None = None
+        self._last_result: RiichiLabGameResult | None = None
+        self._skipped_games = 0
+
+    def ingest(self) -> bool:
+        """最新gameへの切り替えを判定し、表示中gameのbufferをdrainする。"""
+        changed = False
+        latest = self._feed.current()
+        if latest is not None:
+            self._latest_game_ordinal = latest.game_ordinal
+            if self._controller is None:
+                self._attach(latest.game_ordinal, latest.buffer)
+                changed = True
+            elif (
+                latest.game_ordinal != self._game_ordinal and self._controller.following
+            ):
+                self._finish_current()
+                self._skipped_games += latest.game_ordinal - self._game_ordinal - 1
+                self._attach(latest.game_ordinal, latest.buffer)
+                changed = True
+        if self._controller is not None and self._controller.ingest():
+            changed = True
+        return changed
+
+    def _attach(
+        self, game_ordinal: int, buffer: BoundedRankedPresentationBuffer
+    ) -> None:
+        self._controller = RiichiLabLiveController(buffer, capacity=self._capacity)
+        self._game_ordinal = game_ordinal
+
+    def _finish_current(self) -> None:
+        # 前gameのterminal factはこの最終drainで必ず受け取れる。
+        self._controller.ingest()
+        view = self._controller.state()
+        self._last_result = RiichiLabGameResult(
+            game_ordinal=self._game_ordinal,
+            completion=view.completion,
+            failure=view.failure,
+        )
+
+    def pause(self) -> None:
+        if self._controller is not None:
+            self._controller.pause()
+
+    def step(self) -> bool:
+        return self._controller is not None and self._controller.step()
+
+    def follow_live(self) -> bool:
+        return self._controller is not None and self._controller.follow_live()
+
+    def detach(self) -> None:
+        """presentation consumerの離脱をArena feedへ伝える。runは継続する。"""
+        self._feed.detach()
+
+    def state(self) -> RiichiLabContinuousViewState:
+        return RiichiLabContinuousViewState(
+            game_ordinal=self._game_ordinal,
+            latest_game_ordinal=self._latest_game_ordinal,
+            view=None if self._controller is None else self._controller.state(),
+            last_result=self._last_result,
+            skipped_games=self._skipped_games,
+        )
+
+
+@dataclass(frozen=True)
+class RiichiLabContinuousSnapshot:
+    """continuous worker lifecycleのsecret-safeなsnapshot。"""
+
+    running: bool
+    exit_code: int | None
+    error_type: str | None
+
+
+class RiichiLabContinuousStatus:
+    """continuous workerとviewer threadが共有する、最小限のstatus holder。
+
+    tokenもArenaの出力文字列も保持しない。exit codeと、Arena CLIの外へ
+    漏れた例外のtype名だけを持つ。
+    """
+
+    __slots__ = ("_lock", "_running", "_exit_code", "_error_type")
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._running = False
+        self._exit_code: int | None = None
+        self._error_type: str | None = None
+
+    def mark_running(self) -> None:
+        with self._lock:
+            self._running = True
+
+    def mark_finished(self, exit_code: int, *, error_type: str | None = None) -> None:
+        if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+            raise TypeError("exit_code must be an int")
+        with self._lock:
+            self._running = False
+            self._exit_code = exit_code
+            self._error_type = error_type
+
+    def snapshot(self) -> RiichiLabContinuousSnapshot:
+        with self._lock:
+            return RiichiLabContinuousSnapshot(
+                running=self._running,
+                exit_code=self._exit_code,
+                error_type=self._error_type,
+            )
+
+
+def _default_run_continuous_cli(
+    argv: list[str],
+    *,
+    presentation: ContinuousRankedPresentationFeed,
+    stop_requested: Callable[[], bool],
+) -> int:
+    from lisjong_arena.riichilab.continuous_ranked import run_continuous_ranked_cli
+
+    return run_continuous_ranked_cli(
+        argv, presentation=presentation, stop_requested=stop_requested
+    )
+
+
+def run_riichilab_continuous_worker(
+    feed: ContinuousRankedPresentationFeed,
+    status: RiichiLabContinuousStatus,
+    *,
+    arena_argv: list[str],
+    stop_requested: Callable[[], bool],
+    run_cli: Callable[..., int] = _default_run_continuous_cli,
+    error_writer: Callable[[str], None] | None = None,
+) -> None:
+    """continuous worker thread entry point。
+
+    profile / credential解決、ranked実行、durable record、summary出力、
+    exit codeはすべてArenaの`run_continuous_ranked_cli()`へ委譲する。
+    Arena CLIの外へ漏れた例外はtype名だけを記録し、messageやtracebackを
+    出さない(RiichiLab由来の生dataやcredentialを含み得るため)。
+    """
+    if not isinstance(feed, ContinuousRankedPresentationFeed):
+        raise TypeError("feed must be a ContinuousRankedPresentationFeed")
+    if not isinstance(status, RiichiLabContinuousStatus):
+        raise TypeError("status must be a RiichiLabContinuousStatus")
+
+    status.mark_running()
+    try:
+        exit_code = run_cli(
+            list(arena_argv), presentation=feed, stop_requested=stop_requested
+        )
+    except SystemExit as error:
+        # argparse等のSystemExitをthread内で握りつぶさず、exit codeへ変換する。
+        code = error.code
+        exit_code = code if isinstance(code, int) and not isinstance(code, bool) else 2
+        status.mark_finished(exit_code)
+        return
+    except Exception as error:
+        error_type = type(error).__name__
+        if error_writer is not None:
+            error_writer(f"RiichiLab continuous ranked runner failed: {error_type}")
+        status.mark_finished(1, error_type=error_type)
+        return
+    if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+        exit_code = 1
+    status.mark_finished(exit_code)
