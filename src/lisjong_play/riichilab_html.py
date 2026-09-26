@@ -667,8 +667,13 @@ def build_arena_continuous_argv(
     record_dir: str | None,
     duration_seconds: int | None,
     games: int | None,
+    stop_file: str | None = None,
 ) -> list[str]:
-    """Arena `continuous_ranked` CLIへ渡すargv。値の意味はArenaが検証する。"""
+    """Arena `continuous_ranked` CLIへ渡すargv。値の意味はArenaが検証する。
+
+    `stop_file`はそのままArenaの`--stop-file`へ渡す。停止要求の確認・半荘間
+    だけで止めるsemanticsはArenaが所有し、viewerはfileを読まず書かない。
+    """
     argv = ["--profile", profile_name]
     if record_dir is not None:
         argv += ["--record-dir", record_dir]
@@ -676,6 +681,8 @@ def build_arena_continuous_argv(
         argv += ["--duration-seconds", str(duration_seconds)]
     if games is not None:
         argv += ["--games", str(games)]
+    if stop_file is not None:
+        argv += ["--stop-file", stop_file]
     return argv
 
 
@@ -691,6 +698,7 @@ def run_continuous_html_viewer(
     games: int | None,
     port: int,
     open_browser: bool,
+    stop_file: str | None = None,
     writer: Callable[[str], None],
     worker_target: Callable[..., None] = run_riichilab_continuous_worker,
     browser_open: Callable[[str], Any] = webbrowser.open,
@@ -722,6 +730,7 @@ def run_continuous_html_viewer(
                     record_dir=record_dir,
                     duration_seconds=duration_seconds,
                     games=games,
+                    stop_file=stop_file,
                 ),
                 "stop_requested": stop.is_set,
                 "error_writer": _stderr_writer,
@@ -823,6 +832,15 @@ def _parser() -> argparse.ArgumentParser:
         help="--continuous専用。Arenaのcompleted hanchan数bound",
     )
     parser.add_argument(
+        "--stop-file",
+        default=None,
+        metavar="PATH",
+        help=(
+            "--continuous専用。Arenaの--stop-fileへそのまま渡します。PATHが"
+            "存在すると、Arenaは進行中の半荘を完走させ、新しい半荘を始めません"
+        ),
+    )
+    parser.add_argument(
         "--open-browser",
         action="store_true",
         help="起動後に既定のブラウザでviewerを開きます",
@@ -841,9 +859,14 @@ def main(
     parser = _parser()
     args = parser.parse_args(argv)
     if not args.continuous and (
-        args.duration_seconds is not None or args.games is not None
+        args.duration_seconds is not None
+        or args.games is not None
+        or args.stop_file is not None
     ):
-        parser.error("--duration-seconds / --games は --continuous と併用してください")
+        parser.error(
+            "--duration-seconds / --games / --stop-file は --continuous と"
+            "併用してください"
+        )
     if args.continuous:
         try:
             return run_continuous_html_viewer(
@@ -853,6 +876,7 @@ def main(
                 games=args.games,
                 port=args.port,
                 open_browser=args.open_browser,
+                stop_file=args.stop_file,
                 writer=writer,
                 worker_target=continuous_worker_target,
                 browser_open=browser_open,

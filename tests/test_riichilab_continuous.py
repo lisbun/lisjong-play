@@ -8,8 +8,10 @@ game切り替え、lifecycle、stdout summary、credential境界を固定する�
 import contextlib
 import io
 import os
+import tempfile
 import threading
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from lisjong_arena.riichilab.live_presentation import (
@@ -305,6 +307,19 @@ class ArenaArgvTest(unittest.TestCase):
             ),
         )
 
+    def test_stop_file_is_forwarded_unchanged(self) -> None:
+        stop_file = "/var/lib/lisjong riichilab/stop-requested"
+        self.assertEqual(
+            ["--profile", "lisjong-dev", "--stop-file", stop_file],
+            build_arena_continuous_argv(
+                profile_name="lisjong-dev",
+                record_dir=None,
+                duration_seconds=None,
+                games=None,
+                stop_file=stop_file,
+            ),
+        )
+
 
 class _FakeContinuousRun:
     """continuous worker_targetの代わりに、feedへ2 game分publishして終わる。"""
@@ -375,6 +390,30 @@ class ContinuousLifecycleTest(unittest.TestCase):
                     any(f"http://{LOOPBACK_HOST}:" in line for line in lines)
                 )
 
+    def test_stop_file_reaches_the_arena_argv_exactly(self) -> None:
+        fake = _FakeContinuousRun()
+        stop_file = "records/../stop requested"
+
+        code = main(
+            [
+                "--profile",
+                "lisjong-dev",
+                "--continuous",
+                "--stop-file",
+                stop_file,
+                "--port",
+                "0",
+            ],
+            writer=lambda line: None,
+            continuous_worker_target=fake,
+        )
+
+        self.assertEqual(0, code)
+        self.assertEqual(
+            ["--profile", "lisjong-dev", "--stop-file", stop_file],
+            fake.kwargs["arena_argv"],
+        )
+
     def test_viewer_lines_do_not_collide_with_arena_summary_keys(self) -> None:
         lines: list[str] = []
         main(
@@ -434,6 +473,7 @@ class ContinuousLifecycleTest(unittest.TestCase):
         for argv in (
             ["--profile", "lisjong-dev", "--games", "2"],
             ["--profile", "lisjong-dev", "--duration-seconds", "10"],
+            ["--profile", "lisjong-dev", "--stop-file", "stop-requested"],
             ["--profile", "lisjong-dev", "--continuous", "--games", "0"],
             ["--profile", "lisjong-dev", "--continuous", "--duration-seconds", "x"],
         ):
@@ -499,6 +539,52 @@ class ContinuousArenaIntegrationTest(unittest.TestCase):
         self.assertIn("stopped reason: target_completed_games_reached", output)
         rendered = "\n".join([output, stderr.getvalue(), *lines, repr(payloads)])
         self.assertNotIn(_TOKEN, rendered)
+
+    def test_arena_stop_file_finishes_the_hanchan_and_starts_no_new_one(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            stop_file = Path(directory) / "stop-requested"
+            games: list[int] = []
+
+            async def fake_run_ranked_game(policy, token, *, presentation, **kwargs):
+                games.append(len(games) + 1)
+                presentation.publish_decision(decision(request_id=len(games)))
+                # The operator asks to stop while this hanchan is in progress.
+                stop_file.write_text("operator\n", encoding="ascii")
+                presentation.publish_completion(completion())
+
+            stdout = io.StringIO()
+            with (
+                patch.dict(os.environ, {"LISJONG_DEV_BOT_TOKEN": _TOKEN}),
+                patch(
+                    "lisjong_arena.riichilab.continuous_ranked.run_ranked_game",
+                    fake_run_ranked_game,
+                ),
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                code = main(
+                    [
+                        "--profile",
+                        "lisjong-dev",
+                        "--continuous",
+                        "--stop-file",
+                        str(stop_file),
+                        "--port",
+                        "0",
+                    ],
+                    writer=lambda line: None,
+                )
+            # The viewer neither removes nor rewrites the operator's file.
+            self.assertEqual("operator\n", stop_file.read_text(encoding="ascii"))
+
+        self.assertEqual(0, code)
+        self.assertEqual([1], games)
+        output = stdout.getvalue()
+        self.assertIn("stop file: on", output)
+        self.assertIn("completed games: 1", output)
+        self.assertIn("stopped reason: stop_requested", output)
 
 
 if __name__ == "__main__":
