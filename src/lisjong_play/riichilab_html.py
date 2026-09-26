@@ -23,6 +23,17 @@ server boundary
 
 timing / information boundary
 -----------------------------
+continuous mode (`--continuous`, `lisbun/lisjong-play#48`)
+---------------------------------------------------------
+Arena `run_continuous_ranked_cli()`をworker threadで実行し、Arena
+`ContinuousRankedPresentationFeed`からgame attemptごとのbufferを受け取る。
+profile / credential解決、durable record、stdoutのsummary、exit codeはArenaの
+ものをそのまま使う(AWS `aws_run_verify`が同じsummaryをparseする)。main
+threadはrunが終わるまでrequestを処理し、run終了後にserverを閉じてArenaの
+exit codeで終了する。Ctrl+Cはpresentationをdetachし、Arenaの
+`stop_requested`で「進行中の半荘は完走し、新しい半荘へはrequeueしない」
+graceful stopを要求する。
+
 pageの操作は`RiichiLabLiveController`の表示cursorだけを動かし、ranked
 workerへは何も送らない。表示するのはbound bot seat自身のplayer-visible
 `PolicyInput`投影とArenaが報告したterminal factだけで、順位 / 役 / 翻 / 符を
@@ -31,6 +42,7 @@ workerへは何も送らない。表示するのはbound bot seat自身のplayer
 
 import argparse
 import json
+import sys
 import threading
 import webbrowser
 from collections.abc import Callable, Sequence
@@ -41,7 +53,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
-from lisjong_arena.riichilab.live_presentation import BoundedRankedPresentationBuffer
+from lisjong_arena.riichilab.live_presentation import (
+    BoundedRankedPresentationBuffer,
+    ContinuousRankedPresentationFeed,
+)
 
 from lisjong_play.gui_board import GUI_RIVER_LEGEND, RIVER_ROW_SIZE
 from lisjong_play.html_board import (
@@ -52,11 +67,16 @@ from lisjong_play.html_board import (
 )
 from lisjong_play.riichilab_source import (
     PROFILE_NAMES,
+    RiichiLabContinuousController,
+    RiichiLabContinuousSnapshot,
+    RiichiLabContinuousStatus,
+    RiichiLabContinuousViewState,
     RiichiLabLiveController,
     RiichiLabViewState,
     RiichiLabWorkerSnapshot,
     RiichiLabWorkerStatus,
     resolve_record_path,
+    run_riichilab_continuous_worker,
     run_riichilab_worker,
 )
 from lisjong_play.tile_images import (
@@ -69,11 +89,15 @@ __all__ = [
     "CONTROL_COMMANDS",
     "DEFAULT_PORT",
     "LOOPBACK_HOST",
+    "RiichiLabContinuousHtmlSession",
     "RiichiLabHtmlServer",
     "RiichiLabHtmlSession",
+    "build_arena_continuous_argv",
+    "build_continuous_state_payload",
     "build_state_payload",
     "main",
     "render_page_html",
+    "run_continuous_html_viewer",
     "run_html_viewer",
 ]
 
@@ -87,6 +111,8 @@ _PAGE_POLL_INTERVAL_MS = 250
 _MAX_CONTROL_BODY_BYTES = 1024
 _REQUEST_TIMEOUT_SECONDS = 10
 _TILE_CACHE_CONTROL = "private, max-age=86400, immutable"
+#: continuous modeでrun終了を確認する間隔。requestがなくてもこの間隔で戻る。
+_CONTINUOUS_SERVE_POLL_SECONDS = 0.25
 
 LIVE_SCOPE_NOTE = (
     "表示範囲: lisjong自身のplayer-visible state のみ"
@@ -98,6 +124,10 @@ PAUSE_SCOPE_NOTE = (
 CLOSE_SCOPE_NOTE = (
     "browser tabを閉じても、Ctrl+Cでserverを止めてもranked対局は中断されません。"
     "presentationのみdetachし、対局はArena lifecycleに従って完走します。"
+)
+CONTINUOUS_CLOSE_SCOPE_NOTE = (
+    "browser tabを閉じてもranked対局は中断されません。Ctrl+Cは表示をdetachし、"
+    "進行中の半荘を完走させてから新しい半荘を開始せずに終了します。"
 )
 _HAND_CAPTION = "lisjong自身の手牌（bound bot seatのplayer-visible手牌のみ）"
 
@@ -182,6 +212,7 @@ def build_state_payload(
             "action_label": frame.action_label,
             "board": asdict(frame.board),
         },
+        "frame_key": None if frame is None else str(frame.ordinal),
         "following": view.following,
         "can_step": not view.following and view.pending_frames > 0,
         "received_frames": view.received_frames,
@@ -246,6 +277,171 @@ class RiichiLabHtmlSession:
 
     def detach(self) -> None:
         """presentation consumerの離脱をArena bufferへ伝える。対局は続く。"""
+        self._controller.detach()
+
+
+_EMPTY_VIEW = RiichiLabViewState(
+    frame=None,
+    following=True,
+    received_frames=0,
+    pending_frames=0,
+    skipped_frames=0,
+    completion=None,
+    failure=None,
+)
+_NO_SINGLE_WORKER = RiichiLabWorkerSnapshot(
+    running=False, started=False, runtime_summary=None, summary=None, error_text=None
+)
+
+
+def _scores_text(scores: tuple[int, int, int, int] | None) -> str:
+    # Arenaが`scores`なしの`end_game`を受けた場合は推測しない。順位も出さない。
+    return "未提供" if scores is None else " / ".join(str(score) for score in scores)
+
+
+def _continuous_status_text(
+    state: RiichiLabContinuousViewState, worker: RiichiLabContinuousSnapshot
+) -> str:
+    if worker.error_type is not None:
+        return f"continuous runはエラーで終了しました ({worker.error_type})"
+    if worker.exit_code is not None:
+        return f"continuous runは終了しました (exit code {worker.exit_code})"
+    view = state.view
+    if view is None:
+        return "ranked接続中 (最初の半荘を待っています)"
+    game = f"game #{state.game_ordinal}"
+    if view.failure is not None:
+        return f"{game} failure: {view.failure.failure_type} (次の接続を待っています)"
+    if view.completion is not None:
+        return f"{game} end_game: 次の半荘を待っています"
+    if view.frame is not None:
+        return f"{game} 進行中" if view.following else f"{game} 進行中 (表示停止中)"
+    return f"{game} ranked接続中"
+
+
+def _continuous_info_lines(
+    state: RiichiLabContinuousViewState,
+    worker: RiichiLabContinuousSnapshot,
+    profile_name: str,
+) -> list[str]:
+    lines = [LIVE_SCOPE_NOTE, PAUSE_SCOPE_NOTE, CONTINUOUS_CLOSE_SCOPE_NOTE, ""]
+    lines.append(f"profile {profile_name} / mode ranked-continuous")
+    if state.game_ordinal is not None:
+        lines.append(
+            f"表示中 game #{state.game_ordinal}"
+            f" (最新 #{state.latest_game_ordinal}"
+            f" / 未表示game {state.skipped_games})"
+        )
+    view = state.view
+    if view is not None and view.completion is not None:
+        lines += [
+            f"final scores: {_scores_text(view.completion.scores)}",
+            f"bound seat: {view.completion.seat_label}",
+        ]
+    if view is not None and view.failure is not None:
+        lines.append(f"ranked run failure type: {view.failure.failure_type}")
+    result = state.last_result
+    if result is not None:
+        lines += ["", f"前の表示game #{result.game_ordinal}"]
+        if result.completion is not None:
+            lines.append(f"final scores: {_scores_text(result.completion.scores)}")
+        if result.failure is not None:
+            lines.append(f"failure type: {result.failure.failure_type}")
+        if result.completion is None and result.failure is None:
+            lines.append("terminal factなし")
+    if worker.exit_code is not None:
+        lines += ["", f"continuous run exit code: {worker.exit_code}"]
+    if worker.error_type is not None:
+        lines.append(f"ERROR: {worker.error_type}")
+    return lines
+
+
+def build_continuous_state_payload(
+    state: RiichiLabContinuousViewState,
+    worker: RiichiLabContinuousSnapshot,
+    *,
+    profile_name: str,
+) -> dict[str, Any]:
+    """continuous modeのJSON値。single modeと同じkeyに`game`を足したもの。
+
+    値はすべて`riichilab_source`がsecret-safeに保持しているものだけで、
+    credential、Arenaの出力文字列、例外messageを参照しない。
+    """
+    if not isinstance(state, RiichiLabContinuousViewState):
+        raise TypeError("state must be a RiichiLabContinuousViewState")
+    if not isinstance(worker, RiichiLabContinuousSnapshot):
+        raise TypeError("worker must be a RiichiLabContinuousSnapshot")
+    view = _EMPTY_VIEW if state.view is None else state.view
+    payload = build_state_payload(view, _NO_SINGLE_WORKER)
+    if payload["frame"] is not None:
+        payload["frame_key"] = f"{state.game_ordinal}:{payload['frame']['ordinal']}"
+    payload["game"] = {
+        "ordinal": state.game_ordinal,
+        "latest_ordinal": state.latest_game_ordinal,
+        "skipped_games": state.skipped_games,
+    }
+    payload["worker_running"] = worker.running
+    payload["worker_error"] = worker.error_type is not None or (
+        worker.exit_code is not None and worker.exit_code != 0
+    )
+    payload["status_text"] = _continuous_status_text(state, worker)
+    payload["info_text"] = "\n".join(
+        _continuous_info_lines(state, worker, profile_name)
+    )
+    return payload
+
+
+class RiichiLabContinuousHtmlSession:
+    """continuous runのpresentation state。server threadだけが操作する。"""
+
+    __slots__ = ("_controller", "_status", "_profile_name")
+
+    def __init__(
+        self,
+        controller: RiichiLabContinuousController,
+        status: RiichiLabContinuousStatus,
+        *,
+        profile_name: str,
+    ) -> None:
+        if not isinstance(controller, RiichiLabContinuousController):
+            raise TypeError("controller must be a RiichiLabContinuousController")
+        if not isinstance(status, RiichiLabContinuousStatus):
+            raise TypeError("status must be a RiichiLabContinuousStatus")
+        if not isinstance(profile_name, str) or not profile_name:
+            raise TypeError("profile_name must be a non-empty str")
+        self._controller = controller
+        self._status = status
+        self._profile_name = profile_name
+
+    def _payload(self) -> dict[str, Any]:
+        return build_continuous_state_payload(
+            self._controller.state(),
+            self._status.snapshot(),
+            profile_name=self._profile_name,
+        )
+
+    def state_payload(self) -> dict[str, Any]:
+        """Arena feedをdrainしてから現在のstateを返す。pause中もdrainする。"""
+        self._controller.ingest()
+        return self._payload()
+
+    def control(self, command: str) -> dict[str, Any]:
+        """表示cursorを1操作だけ動かす。未知commandは`ValueError`。"""
+        if command not in CONTROL_COMMANDS:
+            raise ValueError(f"unknown control command: {command!r}")
+        self._controller.ingest()
+        if command == "pause":
+            self._controller.pause()
+        elif command == "step":
+            self._controller.step()
+        else:
+            self._controller.follow_live()
+            # follow復帰時は停止中に保留したgame切り替えをすぐ反映する。
+            self._controller.ingest()
+        return self._payload()
+
+    def detach(self) -> None:
+        """presentation consumerの離脱をArena feedへ伝える。runは継続する。"""
         self._controller.detach()
 
 
@@ -379,9 +575,19 @@ class _RequestHandler(BaseHTTPRequestHandler):
 class RiichiLabHtmlServer(HTTPServer):
     """`127.0.0.1`だけにbindする、single-threadedなlive viewer server。"""
 
-    def __init__(self, session: RiichiLabHtmlSession, *, port: int) -> None:
-        if not isinstance(session, RiichiLabHtmlSession):
-            raise TypeError("session must be a RiichiLabHtmlSession")
+    def __init__(
+        self,
+        session: RiichiLabHtmlSession | RiichiLabContinuousHtmlSession,
+        *,
+        port: int,
+    ) -> None:
+        if not isinstance(
+            session, (RiichiLabHtmlSession, RiichiLabContinuousHtmlSession)
+        ):
+            raise TypeError(
+                "session must be a RiichiLabHtmlSession or "
+                "RiichiLabContinuousHtmlSession"
+            )
         if isinstance(port, bool) or not isinstance(port, int):
             raise TypeError("port must be an int")
         if not 0 <= port <= 65535:
@@ -455,6 +661,108 @@ def run_html_viewer(
             worker.join()
 
 
+def build_arena_continuous_argv(
+    *,
+    profile_name: str,
+    record_dir: str | None,
+    duration_seconds: int | None,
+    games: int | None,
+) -> list[str]:
+    """Arena `continuous_ranked` CLIへ渡すargv。値の意味はArenaが検証する。"""
+    argv = ["--profile", profile_name]
+    if record_dir is not None:
+        argv += ["--record-dir", record_dir]
+    if duration_seconds is not None:
+        argv += ["--duration-seconds", str(duration_seconds)]
+    if games is not None:
+        argv += ["--games", str(games)]
+    return argv
+
+
+def _stderr_writer(line: str) -> None:
+    print(line, file=sys.stderr)
+
+
+def run_continuous_html_viewer(
+    *,
+    profile_name: str,
+    record_dir: str | None,
+    duration_seconds: int | None,
+    games: int | None,
+    port: int,
+    open_browser: bool,
+    writer: Callable[[str], None],
+    worker_target: Callable[..., None] = run_riichilab_continuous_worker,
+    browser_open: Callable[[str], Any] = webbrowser.open,
+) -> int:
+    """serverをbindしてからArena continuous runを開始し、終了まで配信する。
+
+    bind失敗時(`OSError`)はranked runを開始しない。runが終了したらserverを
+    閉じ、Arena CLIのexit codeを返す。Ctrl+Cはpresentationをdetachして
+    graceful stopを要求し、進行中の半荘の完走を待つ。
+    """
+    feed = ContinuousRankedPresentationFeed()
+    controller = RiichiLabContinuousController(feed)
+    status = RiichiLabContinuousStatus()
+    session = RiichiLabContinuousHtmlSession(
+        controller, status, profile_name=profile_name
+    )
+    server = RiichiLabHtmlServer(session, port=port)
+    server.timeout = _CONTINUOUS_SERVE_POLL_SECONDS
+    stop = threading.Event()
+    worker: threading.Thread | None = None
+    try:
+        # daemon threadにしない。server停止後もrunの完走までjoinする。
+        worker = threading.Thread(
+            target=worker_target,
+            args=(feed, status),
+            kwargs={
+                "arena_argv": build_arena_continuous_argv(
+                    profile_name=profile_name,
+                    record_dir=record_dir,
+                    duration_seconds=duration_seconds,
+                    games=games,
+                ),
+                "stop_requested": stop.is_set,
+                "error_writer": _stderr_writer,
+            },
+            name="lisjong-play-riichilab-continuous-html",
+            daemon=False,
+        )
+        worker.start()
+        # stdoutはArena summaryと同じlogへ出る。Arena summaryのkey
+        # (`profile:`、`records:`等)と衝突する行を出さない。
+        writer(f"RiichiLab live viewer: {server.url}  (continuous)")
+        writer(PAUSE_SCOPE_NOTE)
+        writer(CONTINUOUS_CLOSE_SCOPE_NOTE)
+        if open_browser:
+            browser_open(server.url)
+        try:
+            while worker.is_alive():
+                server.handle_request()
+        except KeyboardInterrupt:
+            writer("停止を要求しました。進行中の半荘の完走を待っています...")
+    finally:
+        # どの経路でも新しい半荘へrequeueさせない。正常終了時はno-op。
+        stop.set()
+        server.server_close()
+        session.detach()
+        if worker is not None:
+            worker.join()
+    exit_code = status.snapshot().exit_code
+    return 1 if exit_code is None else exit_code
+
+
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("正の整数で指定してください") from None
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("正の整数で指定してください")
+    return parsed
+
+
 def _port(value: str) -> int:
     try:
         port = int(value)
@@ -469,9 +777,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lisjong-play-riichilab-html",
         description=(
-            "RiichiLab ranked対局(1半荘)を開始し、ブラウザでlive観戦するlocal "
-            "HTML viewerを127.0.0.1で配信します。profile / credential / ranked実行は"
-            "lisjong-arenaのcontractを使います。"
+            "RiichiLab ranked対局(既定は1半荘、--continuousで連続)を開始し、"
+            "ブラウザでlive観戦するlocal HTML viewerを127.0.0.1で配信します。"
+            "profile / credential / ranked実行はlisjong-arenaのcontractを使います。"
         ),
     )
     parser.add_argument(
@@ -495,6 +803,26 @@ def _parser() -> argparse.ArgumentParser:
         help=f"127.0.0.1上のport (既定: {DEFAULT_PORT}、0で空きportを自動選択)",
     )
     parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help=(
+            "lisjong-arena continuous rankedで半荘を連続実行し、run終了時に"
+            "Arenaのexit codeで終了します"
+        ),
+    )
+    parser.add_argument(
+        "--duration-seconds",
+        type=_positive_int,
+        default=None,
+        help="--continuous専用。Arenaのgraceful duration bound(秒)",
+    )
+    parser.add_argument(
+        "--games",
+        type=_positive_int,
+        default=None,
+        help="--continuous専用。Arenaのcompleted hanchan数bound",
+    )
+    parser.add_argument(
         "--open-browser",
         action="store_true",
         help="起動後に既定のブラウザでviewerを開きます",
@@ -508,8 +836,31 @@ def main(
     writer: Callable[[str], None] = print,
     worker_target: Callable[..., None] = run_riichilab_worker,
     browser_open: Callable[[str], Any] = webbrowser.open,
+    continuous_worker_target: Callable[..., None] = run_riichilab_continuous_worker,
 ) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if not args.continuous and (
+        args.duration_seconds is not None or args.games is not None
+    ):
+        parser.error("--duration-seconds / --games は --continuous と併用してください")
+    if args.continuous:
+        try:
+            return run_continuous_html_viewer(
+                profile_name=args.profile,
+                record_dir=args.record_dir,
+                duration_seconds=args.duration_seconds,
+                games=args.games,
+                port=args.port,
+                open_browser=args.open_browser,
+                writer=writer,
+                worker_target=continuous_worker_target,
+                browser_open=browser_open,
+            )
+        except OSError as error:
+            # bind失敗はranked開始前に起きる。
+            writer(f"viewer serverを起動できません: {type(error).__name__}: {error}")
+            return 1
     try:
         record_path = resolve_record_path(args.record_dir)
     except (OSError, ValueError) as error:
@@ -580,15 +931,15 @@ _SCRIPT = """
       ? "/tiles/" + encodeURIComponent(label) : undefined,
     config.river_row_size);
   const byId = (id) => document.getElementById(id);
-  let shownOrdinal = null;
+  let shownFrameKey = null;
   let following = true;
   let pollTimer = null;
 
   function apply(state) {
     // 盤面はcumulative snapshotなので、表示frameが変わったときだけ描き直す。
-    if (state.frame !== null && state.frame.ordinal !== shownOrdinal) {
+    if (state.frame !== null && state.frame_key !== shownFrameKey) {
       board.render(state.frame.board);
-      shownOrdinal = state.frame.ordinal;
+      shownFrameKey = state.frame_key;
     }
     following = state.following;
     byId("status").textContent = state.status_text;
